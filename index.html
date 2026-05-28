@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0a0a0a">
@@ -40,7 +40,7 @@ body {
   background: radial-gradient(ellipse 80% 50% at 50% -10%, #2a0a0a 0%, transparent 50%), #0a0a0a;
   color: var(--text);
   min-height: 100vh;
-  padding: 12px 12px 28px;
+  padding: calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
   font-size: 15px;
   -webkit-user-select: none;
   user-select: none;
