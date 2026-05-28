@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a0a0a">
+<title>RAGE · Punktezähler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0a;
+  --surface: #161616;
+  --surface-2: #222;
+  --surface-3: #2c2c2c;
+  --border: #2e2e2e;
+  --border-strong: #444;
+  --text: #f5f5f5;
+  --text-dim: #999;
+  --text-dimmer: #666;
+  --accent: #ef4444;
+  --accent-dark: #b91c1c;
+  --good: #22c55e;
+  --bad: #ef4444;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { overscroll-behavior: none; overflow-x: hidden; }
+body { overscroll-behavior: none; }
+body {
+  font-family: 'Outfit', system-ui, sans-serif;
+  background: radial-gradient(ellipse 80% 50% at 50% -10%, #2a0a0a 0%, transparent 50%), #0a0a0a;
+  color: var(--text);
+  min-height: 100vh;
+  padding: 12px 12px 28px;
+  font-size: 15px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+input { -webkit-user-select: text; user-select: text; }
+.app { max-width: 980px; margin: 0 auto; }
+.layout { display: flex; gap: 16px; align-items: flex-start; }
+.sidebar { width: 220px; flex-shrink: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+.main { flex: 1; min-width: 0; }
+.main-top { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.sidebar .title { font-size: 30px; margin-bottom: 0; }
+.view-toggle { display: flex; justify-content: space-between; align-items: center; }
+.vt-label .vt-t { font-weight: 600; font-size: 13px; }
+.vt-label .vt-s { font-size: 11px; color: var(--text-dim); }
+.sidebar-title { font-family: 'Bungee', sans-serif; font-size: 13px; color: var(--accent); letter-spacing: 1.5px; margin-bottom: 12px; }
+.ctrl-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 10px; font-size: 12px; }
+.ctrl-keys { display: flex; gap: 3px; flex-shrink: 0; }
+.ctrl-keys kbd { background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: 5px; padding: 2px 7px; font-family: monospace; font-size: 11px; color: var(--text); box-shadow: 0 1px 0 #000; line-height: 1.4; }
+.ctrl-desc { color: var(--text-dim); line-height: 1.45; padding-top: 2px; }
+.sidebar-divider { height: 1px; background: var(--border); margin: 14px 0 12px; }
+.reset-link { display: block; text-align: center; font-size: 11px; color: var(--text-dimmer); cursor: pointer; letter-spacing: 0.5px; padding: 4px; }
+.reset-link:hover, .reset-link:active { color: var(--accent); }
+.mini-score { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 5px 0; }
+.mini-score .mn { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-score .mv { font-family: 'Bungee', sans-serif; font-size: 14px; flex-shrink: 0; margin-left: 8px; }
+.mini-score.lead .mn { color: var(--text); font-weight: 600; }
+.mini-score.lead .mv { color: var(--accent); }
+.predict-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.predict-cols .section { margin-bottom: 0; }
+.predict-cols > *, .results-grid > * { min-width: 0; }
+.results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 4px; }
+.pred-counter { display: flex; justify-content: space-between; align-items: center; background: var(--surface-2); border-radius: 10px; padding: 9px 12px; margin-top: 8px; font-size: 13px; color: var(--text-dim); }
+.pred-counter .pc-val { font-family: 'Bungee', sans-serif; font-size: 17px; color: var(--accent); }
+/* Normal-Modus (kein .compact): einspaltig, luftiger */
+.app:not(.compact) .predict-cols { grid-template-columns: 1fr; }
+.app:not(.compact) .results-grid { grid-template-columns: 1fr; }
+@media (max-width: 860px) {
+  .layout { flex-direction: column; }
+  .sidebar { width: 100%; position: static; order: 2; }
+  .main { order: 1; width: 100%; }
+  .predict-cols { grid-template-columns: 1fr; }
+  .results-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .number-pad { grid-template-columns: repeat(auto-fit, minmax(46px, 1fr)); gap: 6px; }
+}
+
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+.title {
+  font-family: 'Bungee', sans-serif; font-size: 36px; color: var(--accent);
+  letter-spacing: 2px; line-height: 1; transform: rotate(-2deg);
+  text-shadow: 3px 3px 0 #000, 5px 5px 0 rgba(239,68,68,0.2);
+}
+.title small {
+  display: block; font-family: 'Outfit', sans-serif; font-size: 10px; color: var(--text-dim);
+  letter-spacing: 4px; transform: rotate(2deg); margin-top: 4px; font-weight: 500;
+}
+.round-pill { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px 14px; text-align: center; }
+.round-pill .label { font-size: 10px; letter-spacing: 2px; color: var(--text-dim); text-transform: uppercase; }
+.round-pill .value { font-family: 'Bungee', sans-serif; font-size: 22px; color: var(--text); letter-spacing: 1px; }
+.round-pill .sub { font-size: 11px; color: var(--text-dim); }
+
+.section { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+.section h2 { font-family: 'Bungee', sans-serif; font-size: 14px; color: var(--accent); letter-spacing: 1.5px; margin-bottom: 10px; }
+.section p.hint { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; line-height: 1.5; }
+
+.round-banner {
+  background: linear-gradient(135deg, #1a0606 0%, #1a1a1a 100%); border: 1px solid var(--border);
+  border-radius: 14px; padding: 12px 16px; margin-bottom: 12px; display: flex; flex-direction: row; align-items: center; gap: 16px;
+}
+.round-banner .round-pill { flex-shrink: 0; }
+.rb-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.round-banner .row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; gap: 12px; }
+.round-banner .row .l { color: var(--text-dim); letter-spacing: 0.5px; }
+.round-banner .row .r { font-weight: 600; text-align: right; }
+.round-banner .dealer-name { color: var(--accent); font-weight: 700; }
+.round-banner .last-tag {
+  background: var(--accent); color: white; font-size: 10px; padding: 3px 8px; border-radius: 5px;
+  letter-spacing: 1px; font-weight: 700; align-self: flex-start; margin-top: 2px;
+}
+
+.player-row {
+  display: flex; align-items: center; padding: 10px 12px; border-radius: 10px;
+  background: var(--surface-2); margin-bottom: 6px; gap: 10px;
+}
+.player-row.current { background: rgba(239,68,68,0.12); border: 1px solid var(--accent); box-shadow: 0 0 16px rgba(239,68,68,0.2); }
+.player-row .name { flex: 1; font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.player-row .badge { font-size: 9px; background: var(--accent); color: white; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.5px; font-weight: 700; }
+.player-row .tip { font-family: 'Bungee', sans-serif; font-size: 18px; min-width: 28px; text-align: center; color: var(--text); }
+.player-row .tip.empty { color: var(--text-dimmer); }
+
+.player-edit { display: flex; gap: 8px; margin-bottom: 6px; }
+.player-edit input {
+  flex: 1; background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  padding: 10px 14px; border-radius: 10px; font-family: inherit; font-size: 15px; font-weight: 500; outline: none;
+}
+.player-edit input:focus { border-color: var(--accent); }
+.icon-btn {
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim);
+  width: 42px; height: 42px; border-radius: 10px; font-size: 18px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.icon-btn:hover, .icon-btn:active { background: var(--accent); color: white; border-color: var(--accent); }
+.icon-btn.add { width: 100%; margin-top: 4px; font-size: 14px; font-weight: 600; letter-spacing: 1px; }
+
+.toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); margin-top: 8px; }
+.toggle-row .label-block { flex: 1; padding-right: 12px; }
+.toggle-row .label-block .t { font-weight: 600; font-size: 14px; }
+.toggle-row .label-block .s { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.switch { width: 50px; height: 28px; background: var(--surface-3); border-radius: 14px; position: relative; cursor: pointer; transition: background 0.2s; flex-shrink: 0; }
+.switch.on { background: var(--accent); }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; background: white; border-radius: 50%; transition: transform 0.2s; }
+.switch.on::after { transform: translateX(22px); }
+
+.select-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.select-chip { padding: 8px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.select-chip.selected { background: var(--accent); border-color: var(--accent); color: white; }
+
+/* Predict input */
+.predict-input-wrap { display: flex; gap: 8px; margin-bottom: 12px; }
+.num-input {
+  flex: 1; min-width: 0; width: 100%; box-sizing: border-box;
+  background: var(--surface-2); border: 2px solid var(--accent); color: var(--text);
+  padding: 14px; border-radius: 12px; font-family: 'Bungee', sans-serif; font-size: 28px;
+  text-align: center; outline: none; letter-spacing: 2px;
+}
+.num-input::placeholder { font-family: 'Outfit', sans-serif; font-size: 14px; color: var(--text-dimmer); letter-spacing: 1px; font-weight: 500; }
+.num-input.shake { animation: shake 0.3s; border-color: var(--bad); }
+@keyframes shake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-6px);} 75%{transform:translateX(6px);} }
+
+.number-pad { display: grid; grid-template-columns: repeat(auto-fit, minmax(56px, 1fr)); gap: 8px; }
+.num-btn {
+  aspect-ratio: 1; background: var(--surface-2); border: 2px solid var(--border); color: var(--text);
+  border-radius: 12px; font-family: 'Bungee', sans-serif; font-size: 22px; cursor: pointer;
+  transition: all 0.12s; display: flex; align-items: center; justify-content: center;
+}
+.num-btn:hover, .num-btn:active { background: var(--accent); border-color: var(--accent); color: white; transform: scale(1.04); }
+.num-btn.forbidden { opacity: 0.3; cursor: not-allowed; position: relative; }
+.num-btn.forbidden:hover, .num-btn.forbidden:active { background: var(--surface-2); color: var(--text); border-color: var(--bad); transform: none; }
+.num-btn.forbidden::after { content: ''; position: absolute; width: 100%; height: 2px; background: var(--bad); transform: rotate(-25deg); }
+
+.stepper { display: flex; align-items: center; background: var(--surface-3); border-radius: 8px; overflow: hidden; width: 100%; }
+.stepper button { width: 28px; height: 34px; background: transparent; border: none; color: var(--text); font-size: 18px; cursor: pointer; font-weight: 700; flex-shrink: 0; }
+.stepper button:hover, .stepper button:active { background: var(--accent); color: white; }
+.stepper button:disabled { opacity: 0.3; cursor: not-allowed; }
+.stepper button:disabled:hover { background: transparent; color: var(--text); }
+.stepper-input {
+  font-family: 'Bungee', sans-serif; font-size: 15px; flex: 1; min-width: 0; width: auto; text-align: center;
+  background: transparent; border: none; color: var(--text); outline: none; padding: 0; height: 34px;
+}
+.stepper-input:focus { background: rgba(239,68,68,0.2); }
+
+.result-row { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; margin-bottom: 6px; }
+.result-row .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.result-row .name-area { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }
+.result-row .pred-pill { font-size: 11px; color: var(--text-dim); background: var(--surface-3); padding: 2px 8px; border-radius: 6px; font-weight: 600; flex-shrink: 0; }
+.result-row .pred-pill b { font-family: 'Bungee', sans-serif; color: var(--text); margin-left: 4px; }
+.result-row .preview { font-family: 'Bungee', sans-serif; font-size: 18px; flex-shrink: 0; margin-left: 8px; }
+.result-row .preview.good { color: var(--good); }
+.result-row .preview.bad { color: var(--bad); }
+.result-row .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ctrl-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ctrl-cell .lbl { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-dim); text-align: center; }
+
+.sum-bar { background: var(--surface-2); border-radius: 10px; padding: 10px 14px; margin: 10px 0 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.sum-bar.ok { background: rgba(34,197,94,0.1); color: var(--good); }
+.sum-bar.error { background: rgba(239,68,68,0.1); color: var(--bad); }
+.sum-bar .sum-val { font-family: 'Bungee', sans-serif; font-size: 18px; }
+
+.btn-primary { width: 100%; padding: 14px; background: var(--accent); color: white; border: none; border-radius: 12px; font-family: 'Bungee', sans-serif; font-size: 15px; cursor: pointer; letter-spacing: 2px; transition: background 0.15s; }
+.btn-primary:hover, .btn-primary:active { background: var(--accent-dark); }
+.btn-primary:disabled { background: var(--surface-3); color: var(--text-dimmer); cursor: not-allowed; }
+.btn-secondary { width: 100%; padding: 12px; background: transparent; color: var(--text-dim); border: 1px solid var(--border); border-radius: 12px; font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; letter-spacing: 1px; margin-top: 8px; }
+.btn-secondary:hover, .btn-secondary:active { border-color: var(--accent); color: var(--accent); }
+
+.summary-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+.summary-table th { font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); padding: 8px 4px; text-align: center; border-bottom: 1px solid var(--border); }
+.summary-table th.l { text-align: left; padding-left: 8px; }
+.summary-table td { padding: 10px 4px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.summary-table td.name { text-align: left; padding-left: 8px; font-weight: 600; }
+.summary-table td.score { font-family: 'Bungee', sans-serif; font-size: 16px; }
+.delta-good { color: var(--good); }
+.delta-bad { color: var(--bad); }
+.delta-zero { color: var(--text-dim); }
+
+.history-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.history-table { border-collapse: collapse; white-space: nowrap; margin: 0 auto; }
+.history-table th, .history-table td { padding: 5px 7px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.history-table th { font-size: 10px; color: var(--text-dim); letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600; }
+.history-table .pname { color: var(--text); font-size: 11px; border-left: 2px solid var(--border-strong); border-bottom: 1px solid var(--border); }
+.history-table .sub { font-size: 11px; padding: 5px 6px; }
+.history-table .sub.grp { border-left: 2px solid var(--border-strong); }
+.history-table .pk { font-family: 'Bungee', sans-serif; }
+.history-table td.r { font-family: 'Bungee', sans-serif; color: var(--text-dim); font-size: 12px; }
+.history-table .totals-row td { border-top: 2px solid var(--border); }
+.history-table .totals-row .pk { font-size: 14px; }
+
+.chart-wrap { width: 100%; overflow-x: auto; margin-top: 4px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; justify-content: center; }
+.chart-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.chart-legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+
+.winner-banner { background: linear-gradient(135deg, #4a1d1d 0%, #1a0606 100%); border: 2px solid var(--accent); border-radius: 14px; padding: 20px; text-align: center; margin-bottom: 12px; }
+.winner-banner .crown { font-size: 36px; margin-bottom: 6px; }
+.winner-banner .name { font-family: 'Bungee', sans-serif; font-size: 28px; color: var(--accent); letter-spacing: 2px; }
+.winner-banner .pts { font-size: 13px; color: var(--text-dim); margin-top: 4px; letter-spacing: 1px; }
+
+.kbd-hint { font-size: 11px; color: var(--text-dimmer); text-align: center; margin-top: 10px; line-height: 1.5; }
+.kbd-hint kbd { background: var(--surface-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-family: monospace; font-size: 10px; color: var(--text-dim); }
+
+.foot-actions { text-align: center; margin-top: 16px; font-size: 11px; color: var(--text-dimmer); letter-spacing: 1px; }
+.foot-actions a { color: var(--text-dim); cursor: pointer; margin: 0 6px; text-decoration: underline; }
+.foot-actions a:hover, .foot-actions a:active { color: var(--accent); }
+
+@media (max-width: 380px) {
+  body { font-size: 14px; padding: 10px 8px 24px; }
+  .title { font-size: 30px; }
+  .num-btn { font-size: 20px; }
+  .section { padding: 12px; }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<script>
+"use strict";
+
+const STORAGE_KEY = 'rage-tracker-v2';
+const ROUNDS = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+const MIN_PLAYERS = 3;
+const MAX_PLAYERS = 8;
+const CHART_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316', '#ec4899', '#06b6d4'];
+
+function defaultState() {
+  return {
+    phase: 'setup',
+    players: [{ name: '' }, { name: '' }, { name: '' }, { name: '' }],
+    startDealerIdx: 3,
+    rulePlusMinus1: true,
+    compact: true,
+    showRoundGraph: false,
+    round: 1,
+    subPhase: 'predict',
+    predictions: [],
+    predictTurn: 0,
+    tricksWon: [],
+    plus5: [],
+    minus5: [],
+    totals: [],
+    history: [],
+  };
+}
+
+let state;
+let pendingFocus = null;
+let initialFocusPending = true;
+let lastScreen = null;
+function loadState() {
+  try {
+    const s = localStorage.getItem(STORAGE_KEY);
+    if (s) { const p = JSON.parse(s); if (p && p.players && p.players.length >= MIN_PLAYERS) return p; }
+  } catch (e) {}
+  return defaultState();
+}
+function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {} }
+function reset() { state = defaultState(); save(); render(); }
+state = loadState();
+
+const cards = r => ROUNDS[r - 1];
+const nPlayers = () => state.players.length;
+const pName = i => ((state.players[i] && state.players[i].name) || '').trim() || `Spieler ${i + 1}`;
+function inputOrder() {
+  const order = [];
+  for (let i = 0; i < nPlayers(); i++) order.push(`t${i}`, `p${i}`, `m${i}`);
+  return order;
+}
+function silentSet(focusId, v) {
+  const i = parseInt(focusId.slice(1), 10);
+  if (focusId[0] === 't') state.tricksWon[i] = Math.max(0, Math.min(cards(state.round), v));
+  else if (focusId[0] === 'p') state.plus5[i] = Math.max(0, Math.min(3, v));
+  else if (focusId[0] === 'm') state.minus5[i] = Math.max(0, Math.min(3, v));
+  save();
+}
+function commitActiveStepper() {
+  const a = document.activeElement;
+  if (a && a.classList && a.classList.contains('stepper-input') && a.dataset.focusId) {
+    const v = parseInt(a.value, 10);
+    silentSet(a.dataset.focusId, isNaN(v) ? 0 : v);
+  }
+}
+function updateResultsLive() {
+  if (state.subPhase !== 'results') return;
+  const target = cards(state.round), sum = sumTricks();
+  const sumBar = document.querySelector('[data-sumbar]');
+  if (sumBar) {
+    sumBar.className = 'sum-bar ' + (sum === target ? 'ok' : 'error');
+    const tEl = sumBar.querySelector('[data-sumtext]');
+    if (tEl) tEl.textContent = sum === target ? '✓ Stichzahl passt' : 'Summe der Stiche muss passen';
+    const vEl = sumBar.querySelector('[data-sumval]');
+    if (vEl) vEl.innerHTML = `${sum} <span style="color:var(--text-dim); font-size:13px;">/ ${target}</span>`;
+  }
+  for (let i = 0; i < nPlayers(); i++) {
+    const pv = document.querySelector(`[data-preview="${i}"]`);
+    if (pv) { const s = computeRoundScore(i); pv.className = 'preview ' + (s > 0 ? 'good' : s < 0 ? 'bad' : ''); pv.textContent = (s > 0 ? '+' : '') + s; }
+  }
+  const btn = document.querySelector('[data-commit]');
+  if (btn) btn.disabled = sum !== target;
+}
+function goBack() {
+  if (state.phase !== 'playing') return;
+  if (state.subPhase === 'predict') {
+    if (state.predictTurn > 0) undoPrediction();
+    else if (state.history.length > 0) editLastRound();
+  } else if (state.subPhase === 'results') {
+    commitActiveStepper();
+    const a = document.activeElement;
+    const fid = a && a.dataset ? a.dataset.focusId : null;
+    const order = inputOrder();
+    const idx = fid ? order.indexOf(fid) : -1;
+    if (idx > 0) { pendingFocus = order[idx - 1]; render(); }
+    else if (idx === 0) { backFromResults(); }
+    else { pendingFocus = order[order.length - 1]; render(); }
+  } else if (state.subPhase === 'summary') {
+    editLastRound();
+  }
+}
+const getDealerIdx = round => (state.startDealerIdx + round - 1) % nPlayers();
+function getTurnOrder(round) {
+  const dealer = getDealerIdx(round), n = nPlayers(), order = [];
+  for (let i = 1; i <= n; i++) order.push((dealer + i) % n);
+  return order;
+}
+function isLastRound() { return state.round === 10; }
+function getForbiddenForDealer() {
+  if (!state.rulePlusMinus1) return null;
+  if (isLastRound()) return null; // Letzte Runde: Stiche dürfen aufgehen
+  if (state.predictTurn !== nPlayers() - 1) return null;
+  const sumSoFar = state.predictions.reduce((a, b) => a + (b || 0), 0);
+  const forbidden = cards(state.round) - sumSoFar;
+  if (forbidden < 0 || forbidden > cards(state.round)) return null;
+  return forbidden;
+}
+function computeRoundScore(p) {
+  let s = state.tricksWon[p];
+  s += state.plus5[p] * 5;
+  s -= state.minus5[p] * 5;
+  s += (state.predictions[p] === state.tricksWon[p]) ? 10 : -5;
+  return s;
+}
+function sumTricks() { return state.tricksWon.reduce((a, b) => a + b, 0); }
+
+function initRound() {
+  state.predictions = new Array(nPlayers()).fill(null);
+  state.tricksWon = new Array(nPlayers()).fill(0);
+  state.plus5 = new Array(nPlayers()).fill(0);
+  state.minus5 = new Array(nPlayers()).fill(0);
+  state.predictTurn = 0;
+  state.subPhase = 'predict';
+}
+function startGame() {
+  if (nPlayers() < MIN_PLAYERS) return;
+  state.phase = 'playing';
+  state.round = 1;
+  state.totals = new Array(nPlayers()).fill(0);
+  state.history = [];
+  initRound();
+  save(); render();
+}
+function submitPrediction(value) {
+  const order = getTurnOrder(state.round);
+  state.predictions[order[state.predictTurn]] = value;
+  state.predictTurn++;
+  if (state.predictTurn >= nPlayers()) state.subPhase = 'results';
+  save(); render();
+}
+function undoPrediction() {
+  if (state.predictTurn === 0) return;
+  state.predictTurn--;
+  state.predictions[getTurnOrder(state.round)[state.predictTurn]] = null;
+  save(); render();
+}
+function setTricks(idx, v) { state.tricksWon[idx] = Math.max(0, Math.min(cards(state.round), v)); save(); render(); }
+function setPlus5(idx, v) { state.plus5[idx] = Math.max(0, Math.min(3, v)); save(); render(); }
+function setMinus5(idx, v) { state.minus5[idx] = Math.max(0, Math.min(3, v)); save(); render(); }
+function commitRound() {
+  commitActiveStepper();
+  if (sumTricks() !== cards(state.round)) return;
+  const roundScores = [];
+  for (let p = 0; p < nPlayers(); p++) { const s = computeRoundScore(p); roundScores.push(s); state.totals[p] += s; }
+  state.history.push({
+    round: state.round, cards: cards(state.round), dealer: getDealerIdx(state.round),
+    predictions: [...state.predictions], tricks: [...state.tricksWon],
+    plus5: [...state.plus5], minus5: [...state.minus5], scores: roundScores, totals: [...state.totals],
+  });
+  state.subPhase = 'summary';
+  save(); render();
+}
+function nextRound() {
+  if (state.round >= 10) { state.phase = 'gameEnd'; save(); render(); return; }
+  state.round++; initRound(); save(); render();
+}
+function editLastRound() {
+  if (state.history.length === 0) return;
+  const last = state.history.pop();
+  for (let p = 0; p < nPlayers(); p++) state.totals[p] -= last.scores[p];
+  state.round = last.round;
+  state.predictions = [...last.predictions];
+  state.tricksWon = [...last.tricks];
+  state.plus5 = [...last.plus5];
+  state.minus5 = [...last.minus5];
+  state.predictTurn = nPlayers();
+  state.subPhase = 'results';
+  state.phase = 'playing';
+  save(); render();
+}
+function backFromResults() {
+  state.predictTurn = nPlayers() - 1;
+  state.predictions[getTurnOrder(state.round)[nPlayers() - 1]] = null;
+  state.subPhase = 'predict';
+  save(); render();
+}
+
+// ============ RENDER HELPERS ============
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') e.className = v;
+    else if (k === 'style') e.style.cssText = v;
+    else if (k === 'html') e.innerHTML = v;
+    else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (v != null && v !== false) e.setAttribute(k, v);
+  }
+  for (const c of children.flat(Infinity)) {
+    if (c == null || c === false) continue;
+    if (typeof c === 'string' || typeof c === 'number') e.appendChild(document.createTextNode(c));
+    else e.appendChild(c);
+  }
+  return e;
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c])); }
+function focusNextInput(currentId) {
+  const inputs = Array.from(document.querySelectorAll('input[data-focus-id]'));
+  const idx = inputs.findIndex(i => i.dataset.focusId === currentId);
+  if (idx >= 0 && idx < inputs.length - 1) { inputs[idx + 1].focus(); inputs[idx + 1].select(); }
+  else { const btn = document.querySelector('[data-commit]'); if (btn && !btn.disabled) btn.click(); }
+}
+
+function renderLogo() {
+  const title = el('div', { class: 'title' }, 'RAGE');
+  title.appendChild(el('small', {}, 'PUNKTEZÄHLER'));
+  return title;
+}
+function renderRoundPill() {
+  const pill = el('div', { class: 'round-pill' });
+  pill.appendChild(el('div', { class: 'label' }, 'Runde'));
+  pill.appendChild(el('div', { class: 'value' }, `${state.round}/10`));
+  pill.appendChild(el('div', { class: 'sub' }, `${cards(state.round)} Karten`));
+  return pill;
+}
+
+function renderSetup() {
+  const root = document.createDocumentFragment();
+  const sec = el('div', { class: 'section' });
+  sec.appendChild(el('h2', {}, 'SPIELER'));
+  sec.appendChild(el('p', { class: 'hint' }, `${MIN_PLAYERS}–${MAX_PLAYERS} Spieler. Reihenfolge = Sitzordnung im Uhrzeigersinn.`));
+  state.players.forEach((p, i) => {
+    const row = el('div', { class: 'player-edit' });
+    const input = el('input', {
+      'data-focus-id': `name${i}`,
+      ...(i === 0 ? { 'data-init-focus': '' } : {}),
+      type: 'text', value: p.name, maxlength: 20, placeholder: `Spieler ${i + 1}`,
+      onkeydown: e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const inputs = Array.from(document.querySelectorAll('.player-edit input'));
+          if (i < inputs.length - 1) inputs[i + 1].focus();
+          else { input.blur(); const b = document.querySelector('[data-start]'); if (b) b.focus(); }
+        }
+      },
+      oninput: e => { state.players[i].name = e.target.value; save(); render(); },
+    });
+    row.appendChild(input);
+    if (nPlayers() > MIN_PLAYERS) {
+      row.appendChild(el('button', {
+        class: 'icon-btn', tabindex: '-1',
+        onclick: () => { state.players.splice(i, 1); if (state.startDealerIdx >= nPlayers()) state.startDealerIdx = nPlayers() - 1; save(); render(); },
+      }, '×'));
+    }
+    sec.appendChild(row);
+  });
+  if (nPlayers() < MAX_PLAYERS) {
+    sec.appendChild(el('button', {
+      class: 'icon-btn add', tabindex: '-1',
+      onclick: () => { state.players.push({ name: '' }); save(); render(); },
+    }, '+ SPIELER HINZUFÜGEN'));
+  }
+  root.appendChild(sec);
+
+  const dealerSec = el('div', { class: 'section' });
+  dealerSec.appendChild(el('h2', {}, 'ERSTER GEBER'));
+  dealerSec.appendChild(el('p', { class: 'hint' }, 'Wer teilt in Runde 1 aus? (Wechselt danach im Uhrzeigersinn.)'));
+  const chips = el('div', { class: 'select-row' });
+  state.players.forEach((p, i) => {
+    chips.appendChild(el('button', {
+      class: 'select-chip' + (state.startDealerIdx === i ? ' selected' : ''), tabindex: '-1',
+      onclick: () => { state.startDealerIdx = i; save(); render(); },
+    }, pName(i)));
+  });
+  dealerSec.appendChild(chips);
+
+  const toggleRow = el('div', { class: 'toggle-row' });
+  const lblBlock = el('div', { class: 'label-block' });
+  lblBlock.appendChild(el('div', { class: 't' }, 'Plus/Minus 1 Regel'));
+  lblBlock.appendChild(el('div', { class: 's' }, 'Geber darf nicht so tippen, dass alle Tipps zusammen genau die Stichzahl ergeben. (In der letzten Runde immer aus.)'));
+  toggleRow.appendChild(lblBlock);
+  toggleRow.appendChild(el('div', { class: 'switch' + (state.rulePlusMinus1 ? ' on' : ''), onclick: () => { state.rulePlusMinus1 = !state.rulePlusMinus1; save(); render(); } }));
+  dealerSec.appendChild(toggleRow);
+  root.appendChild(dealerSec);
+
+  root.appendChild(el('button', { class: 'btn-primary', 'data-start': '', onclick: startGame, disabled: nPlayers() < MIN_PLAYERS || false }, 'SPIEL STARTEN'));
+
+  const hint = el('div', { class: 'kbd-hint', html: 'Tipp: Alles per Numpad bedienbar – Zahlen tippen, <kbd>Enter</kbd> springt weiter.' });
+  root.appendChild(hint);
+  return root;
+}
+
+function renderRoundBanner() {
+  const dealerIdx = getDealerIdx(state.round);
+  const startIdx = getTurnOrder(state.round)[0];
+  const banner = el('div', { class: 'round-banner' });
+  banner.appendChild(renderRoundPill());
+  const info = el('div', { class: 'rb-info' });
+  const r2 = el('div', { class: 'row' });
+  r2.appendChild(el('span', { class: 'l' }, 'Austeilen:'));
+  r2.appendChild(el('span', { class: 'r dealer-name' }, pName(dealerIdx)));
+  info.appendChild(r2);
+  const r3 = el('div', { class: 'row' });
+  r3.appendChild(el('span', { class: 'l' }, state.subPhase === 'results' ? 'Runde beginnt bei:' : 'Tipps beginnen bei:'));
+  r3.appendChild(el('span', { class: 'r' }, pName(startIdx)));
+  info.appendChild(r3);
+  if (isLastRound()) info.appendChild(el('div', { class: 'last-tag' }, 'LETZTE RUNDE · STICHE DÜRFEN AUFGEHEN'));
+  banner.appendChild(info);
+  return banner;
+}
+
+function renderPredict() {
+  const root = document.createDocumentFragment();
+  root.appendChild(renderRoundBanner());
+  const order = getTurnOrder(state.round);
+  const currentPlayerIdx = state.predictTurn < nPlayers() ? order[state.predictTurn] : null;
+  const isDealer = state.predictTurn === nPlayers() - 1;
+  const forbidden = getForbiddenForDealer();
+  const maxCards = cards(state.round);
+
+  const listSec = el('div', { class: 'section' });
+  listSec.appendChild(el('h2', {}, 'TIPPS'));
+  for (let i = 0; i < nPlayers(); i++) {
+    const isCurrent = i === currentPlayerIdx;
+    const row = el('div', { class: 'player-row' + (isCurrent ? ' current' : '') });
+    const name = el('div', { class: 'name' });
+    name.appendChild(el('span', {}, pName(i)));
+    if (i === getDealerIdx(state.round)) name.appendChild(el('span', { class: 'badge' }, 'GEBER'));
+    if (isCurrent) name.appendChild(el('span', { class: 'badge' }, 'JETZT'));
+    row.appendChild(name);
+    const tip = state.predictions[i];
+    row.appendChild(el('div', { class: 'tip' + (tip === null ? ' empty' : '') }, tip === null ? '—' : String(tip)));
+    listSec.appendChild(row);
+  }
+  const predictedSum = state.predictions.reduce((a, b) => a + (b || 0), 0);
+  const predDone = state.predictions.filter(x => x !== null).length;
+  const pc = el('div', { class: 'pred-counter' });
+  pc.appendChild(el('span', {}, `Angesagt (${predDone}/${nPlayers()} Spieler)`));
+  pc.appendChild(el('span', { class: 'pc-val' }, `${predictedSum} / ${maxCards}`));
+  listSec.appendChild(pc);
+  const cols = el('div', { class: 'predict-cols' });
+  cols.appendChild(listSec);
+
+  if (currentPlayerIdx !== null) {
+    const pickerSec = el('div', { class: 'section' });
+    pickerSec.appendChild(el('h2', {}, `TIPP: ${pName(currentPlayerIdx).toUpperCase()}`));
+    let hintHtml = `Wie viele Stiche gewinnt ${esc(pName(currentPlayerIdx))}? (0–${maxCards})`;
+    if (isDealer && forbidden !== null) hintHtml = `${esc(pName(currentPlayerIdx))} ist Geber. Tipp <b style="color:var(--bad)">${forbidden}</b> ist gesperrt (Plus/Minus 1).`;
+    pickerSec.appendChild(el('p', { class: 'hint', html: hintHtml }));
+
+    const wrap = el('div', { class: 'predict-input-wrap' });
+    const input = el('input', {
+      'data-focus-id': 'predict', 'data-autofocus': '', type: 'text', inputmode: 'numeric',
+      maxlength: maxCards >= 10 ? '2' : '1', class: 'num-input', placeholder: 'Tippen + Enter',
+      onkeydown: e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const v = input.value === '' ? 0 : parseInt(input.value, 10);
+          if (isNaN(v) || v < 0 || v > maxCards || v === forbidden) { input.classList.add('shake'); setTimeout(() => input.classList.remove('shake'), 300); input.value = ''; return; }
+          submitPrediction(v);
+        } else if (e.key === 'Backspace' && input.value === '' && state.predictTurn > 0) { e.preventDefault(); undoPrediction(); }
+        else if (e.key.length === 1 && !/[0-9]/.test(e.key)) e.preventDefault();
+      },
+      oninput: () => { input.value = input.value.replace(/[^0-9]/g, ''); },
+    });
+    wrap.appendChild(input);
+    pickerSec.appendChild(wrap);
+
+    const pad = el('div', { class: 'number-pad' });
+    for (let i = 0; i <= maxCards; i++) {
+      const isForbidden = i === forbidden;
+      pad.appendChild(el('button', { class: 'num-btn' + (isForbidden ? ' forbidden' : ''), tabindex: '-1', onclick: isForbidden ? null : () => submitPrediction(i), disabled: isForbidden }, String(i)));
+    }
+    pickerSec.appendChild(pad);
+    if (state.predictTurn > 0) pickerSec.appendChild(el('button', { class: 'btn-secondary', tabindex: '-1', onclick: undoPrediction }, '← LETZTEN TIPP RÜCKGÄNGIG'));
+    cols.appendChild(pickerSec);
+  }
+  root.appendChild(cols);
+
+  const foot = el('div', { class: 'foot-actions' });
+  if (state.history.length > 0) foot.appendChild(el('a', { onclick: editLastRound }, 'Letzte Runde bearbeiten'));
+  foot.appendChild(el('a', { onclick: () => { if (confirm('Spiel komplett zurücksetzen?')) reset(); } }, 'Spiel zurücksetzen'));
+  root.appendChild(foot);
+  return root;
+}
+
+function makeStepper(value, min, max, onChange, focusId, autofocus) {
+  const s = el('div', { class: 'stepper' });
+  const clamp = v => Math.max(min, Math.min(max, v));
+  let input;
+  const read = () => { const v = parseInt(input.value, 10); return isNaN(v) ? value : v; };
+  s.appendChild(el('button', { tabindex: '-1', onclick: () => onChange(clamp(read() - 1)) }, '−'));
+  const attrs = {
+    'data-focus-id': focusId, type: 'text', inputmode: 'numeric', class: 'stepper-input', value: String(value), maxlength: '2',
+    onkeydown: e => {
+      if (e.key === 'Enter' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const order = inputOrder();
+        const idx = order.indexOf(focusId);
+        pendingFocus = (idx >= 0 && idx < order.length - 1) ? order[idx + 1] : '__commit__';
+        onChange(clamp(read()));
+      } else if (e.key === 'ArrowUp') { e.preventDefault(); onChange(clamp(read() + 1)); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); onChange(clamp(read() - 1)); }
+      else if (e.key.length === 1 && !/[0-9]/.test(e.key)) e.preventDefault();
+    },
+    oninput: () => { input.value = input.value.replace(/[^0-9]/g, ''); silentSet(focusId, clamp(read())); updateResultsLive(); },
+    onblur: () => { silentSet(focusId, clamp(read())); },
+    onfocus: () => input.select(),
+  };
+  if (autofocus) attrs['data-enter-focus'] = '';
+  input = el('input', attrs);
+  s.appendChild(input);
+  s.appendChild(el('button', { tabindex: '-1', onclick: () => onChange(clamp(read() + 1)) }, '+'));
+  return s;
+}
+
+function renderResults() {
+  const root = document.createDocumentFragment();
+  root.appendChild(renderRoundBanner());
+  const sec = el('div', { class: 'section' });
+  sec.appendChild(el('h2', {}, 'STICHE & AKTIONSKARTEN'));
+  sec.appendChild(el('p', { class: 'hint', html: 'Pro Spieler eintragen: gewonnene Stiche, erhaltene +5 und −5 Karten. Tippen + <kbd>Enter</kbd> springt zum nächsten Feld.' }));
+
+  const grid = el('div', { class: 'results-grid' });
+  for (let i = 0; i < nPlayers(); i++) {
+    const tricks = state.tricksWon[i];
+    const pred = state.predictions[i];
+    const max = cards(state.round);
+    const preview = computeRoundScore(i);
+    const row = el('div', { class: 'result-row' });
+    const top = el('div', { class: 'top' });
+    const nameArea = el('div', { class: 'name-area' });
+    nameArea.appendChild(el('span', {}, pName(i)));
+    nameArea.appendChild(el('span', { class: 'pred-pill', html: `Tipp <b>${pred}</b>` }));
+    top.appendChild(nameArea);
+    top.appendChild(el('div', { class: 'preview ' + (preview > 0 ? 'good' : preview < 0 ? 'bad' : ''), 'data-preview': String(i) }, (preview > 0 ? '+' : '') + preview));
+    row.appendChild(top);
+    const ctrl = el('div', { class: 'controls' });
+    const cellT = el('div', { class: 'ctrl-cell' });
+    cellT.appendChild(el('span', { class: 'lbl' }, 'STICHE'));
+    cellT.appendChild(makeStepper(tricks, 0, max, v => setTricks(i, v), `t${i}`, i === 0));
+    ctrl.appendChild(cellT);
+    const cellP = el('div', { class: 'ctrl-cell' });
+    cellP.appendChild(el('span', { class: 'lbl', style: 'color:#86efac' }, '+5'));
+    cellP.appendChild(makeStepper(state.plus5[i], 0, 3, v => setPlus5(i, v), `p${i}`));
+    ctrl.appendChild(cellP);
+    const cellM = el('div', { class: 'ctrl-cell' });
+    cellM.appendChild(el('span', { class: 'lbl', style: 'color:#fca5a5' }, '−5'));
+    cellM.appendChild(makeStepper(state.minus5[i], 0, 3, v => setMinus5(i, v), `m${i}`));
+    ctrl.appendChild(cellM);
+    row.appendChild(ctrl);
+    grid.appendChild(row);
+  }
+  sec.appendChild(grid);
+
+  const sum = sumTricks(), target = cards(state.round);
+  const sumBar = el('div', { class: 'sum-bar ' + (sum === target ? 'ok' : 'error'), 'data-sumbar': '' });
+  sumBar.appendChild(el('span', { 'data-sumtext': '' }, sum === target ? '✓ Stichzahl passt' : 'Summe der Stiche muss passen'));
+  sumBar.appendChild(el('span', { class: 'sum-val', 'data-sumval': '', html: `${sum} <span style="color:var(--text-dim); font-size:13px;">/ ${target}</span>` }));
+  sec.appendChild(sumBar);
+
+  sec.appendChild(el('button', { class: 'btn-primary', 'data-commit': '', onclick: commitRound, disabled: sum !== target || false }, 'RUNDE ABSCHLIEßEN'));
+  sec.appendChild(el('button', { class: 'btn-secondary', tabindex: '-1', onclick: backFromResults }, '← TIPPS BEARBEITEN'));
+  root.appendChild(sec);
+  return root;
+}
+
+function renderSummary() {
+  const log = state.history[state.history.length - 1];
+  const root = document.createDocumentFragment();
+  const sec = el('div', { class: 'section' });
+  sec.appendChild(el('h2', {}, `RUNDE ${log.round} ABGESCHLOSSEN`));
+  const tbl = el('table', { class: 'summary-table' });
+  const hr = el('tr');
+  ['Spieler', 'Tipp', 'Stiche', '±5', 'Runde', 'Gesamt'].forEach((t, i) => hr.appendChild(el('th', { class: i === 0 ? 'l' : '' }, t)));
+  tbl.appendChild(hr);
+  for (let p = 0; p < nPlayers(); p++) {
+    const tr = el('tr');
+    tr.appendChild(el('td', { class: 'name' }, pName(p)));
+    tr.appendChild(el('td', {}, String(log.predictions[p])));
+    tr.appendChild(el('td', {}, String(log.tricks[p])));
+    const bonus = log.plus5[p] - log.minus5[p];
+    let bStr = '—', bCls = 'delta-zero';
+    if (bonus > 0) { bStr = `+${bonus * 5}`; bCls = 'delta-good'; } else if (bonus < 0) { bStr = `${bonus * 5}`; bCls = 'delta-bad'; }
+    tr.appendChild(el('td', { class: bCls }, bStr));
+    const s = log.scores[p];
+    tr.appendChild(el('td', { class: 'score ' + (s > 0 ? 'delta-good' : s < 0 ? 'delta-bad' : 'delta-zero') }, (s >= 0 ? '+' : '') + s));
+    tr.appendChild(el('td', { class: 'score' }, String(log.totals[p])));
+    tbl.appendChild(tr);
+  }
+  sec.appendChild(tbl);
+  root.appendChild(sec);
+  if (state.showRoundGraph) root.appendChild(renderChart());
+  root.appendChild(el('button', { class: 'btn-primary', 'data-commit': '', onclick: nextRound }, state.round >= 10 ? '🏆 SPIEL BEENDEN' : `→ RUNDE ${state.round + 1} · ${cards(state.round + 1)} KARTEN · GEBER ${pName(getDealerIdx(state.round + 1)).toUpperCase()}`));
+  root.appendChild(el('button', { class: 'btn-secondary', tabindex: '-1', onclick: editLastRound }, '← RUNDE NOCHMAL BEARBEITEN'));
+  root.appendChild(el('div', { class: 'kbd-hint', html: '<kbd>Enter</kbd> für nächste Runde.' }));
+  return root;
+}
+
+function buildChartSVG() {
+  const W = 540, H = 280;
+  const pad = { top: 16, right: 16, bottom: 28, left: 38 };
+  const innerW = W - pad.left - pad.right, innerH = H - pad.top - pad.bottom;
+  const series = [];
+  for (let p = 0; p < nPlayers(); p++) { const pts = [0]; for (const log of state.history) pts.push(log.totals[p]); series.push(pts); }
+  let minY = 0, maxY = 0;
+  for (const s of series) for (const v of s) { if (v < minY) minY = v; if (v > maxY) maxY = v; }
+  const rangeY = Math.max(20, maxY - minY);
+  minY = Math.floor((minY - rangeY * 0.08) / 10) * 10;
+  maxY = Math.ceil((maxY + rangeY * 0.08) / 10) * 10;
+  if (maxY === minY) maxY = minY + 10;
+  const numPoints = series[0].length;
+  const xStep = numPoints > 1 ? innerW / (numPoints - 1) : 0;
+  const x = i => pad.left + i * xStep;
+  const y = v => pad.top + innerH - ((v - minY) / (maxY - minY)) * innerH;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block;">`;
+  const steps = 5;
+  for (let i = 0; i <= steps; i++) {
+    const v = Math.round(minY + (maxY - minY) * (i / steps)), yp = y(v);
+    svg += `<line x1="${pad.left}" y1="${yp}" x2="${pad.left + innerW}" y2="${yp}" stroke="#2e2e2e" stroke-width="1"/>`;
+    svg += `<text x="${pad.left - 6}" y="${yp + 3}" fill="#666" font-size="10" text-anchor="end">${v}</text>`;
+  }
+  for (let i = 0; i < numPoints; i++) {
+    svg += `<text x="${x(i)}" y="${H - pad.bottom + 15}" fill="#666" font-size="10" text-anchor="middle">${i === 0 ? '0' : i}</text>`;
+  }
+  if (minY < 0 && maxY > 0) svg += `<line x1="${pad.left}" y1="${y(0)}" x2="${pad.left + innerW}" y2="${y(0)}" stroke="#555" stroke-width="1" stroke-dasharray="3 3"/>`;
+  for (let p = 0; p < nPlayers(); p++) {
+    const color = CHART_COLORS[p % CHART_COLORS.length];
+    let path = '';
+    series[p].forEach((v, i) => path += (i === 0 ? 'M' : 'L') + x(i).toFixed(1) + ',' + y(v).toFixed(1) + ' ');
+    svg += `<path d="${path}" stroke="${color}" stroke-width="2.5" fill="none" stroke-linejoin="round"/>`;
+    series[p].forEach((v, i) => { svg += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3" fill="${color}" stroke="#0a0a0a" stroke-width="1.5"/>`; });
+  }
+  svg += '</svg>';
+  return svg;
+}
+
+function renderChart() {
+  const sec = el('div', { class: 'section' });
+  sec.appendChild(el('h2', {}, 'PUNKTEVERLAUF'));
+  sec.appendChild(el('p', { class: 'hint' }, 'X-Achse: Runden · Y-Achse: Gesamtpunkte'));
+  sec.appendChild(el('div', { class: 'chart-wrap', html: buildChartSVG() }));
+  const legend = el('div', { class: 'chart-legend' });
+  for (let p = 0; p < nPlayers(); p++) {
+    const item = el('div', { class: 'chart-legend-item' });
+    item.appendChild(el('span', { class: 'chart-legend-dot', style: `background:${CHART_COLORS[p % CHART_COLORS.length]}` }));
+    item.appendChild(el('span', {}, pName(p)));
+    legend.appendChild(item);
+  }
+  sec.appendChild(legend);
+  return sec;
+}
+
+function renderGameEnd() {
+  const root = document.createDocumentFragment();
+  const sorted = [...Array(nPlayers()).keys()].sort((a, b) => state.totals[b] - state.totals[a]);
+  const winner = sorted[0];
+  const banner = el('div', { class: 'winner-banner' });
+  banner.appendChild(el('div', { class: 'crown' }, '👑'));
+  banner.appendChild(el('div', { class: 'name' }, pName(winner)));
+  banner.appendChild(el('div', { class: 'pts' }, `${state.totals[winner]} PUNKTE`));
+  root.appendChild(banner);
+
+  const sec = el('div', { class: 'section' });
+  sec.appendChild(el('h2', {}, 'ENDSTAND'));
+  const tbl = el('table', { class: 'summary-table' });
+  const hr = el('tr');
+  ['Platz', 'Spieler', 'Punkte'].forEach((t, i) => hr.appendChild(el('th', { class: i < 2 ? 'l' : '' }, t)));
+  tbl.appendChild(hr);
+  sorted.forEach((p, i) => {
+    const tr = el('tr');
+    tr.appendChild(el('td', { class: 'name' }, `${i + 1}.`));
+    tr.appendChild(el('td', { class: 'name' }, pName(p)));
+    tr.appendChild(el('td', { class: 'score' }, String(state.totals[p])));
+    tbl.appendChild(tr);
+  });
+  sec.appendChild(tbl);
+  root.appendChild(sec);
+
+  root.appendChild(renderChart());
+
+  const hsec = el('div', { class: 'section' });
+  hsec.appendChild(el('h2', {}, 'ALLE RUNDEN'));
+  hsec.appendChild(el('p', { class: 'hint' }, 'T = Tipp · S = Stiche · ± = Aktionskarten (+5/−5) · P = Rundenpunkte. Bei Treffer (T=S) gibt es +10, sonst −5.'));
+  const wrap = el('div', { class: 'history-wrap' });
+  const htbl = el('table', { class: 'history-table' });
+  const h1 = el('tr');
+  h1.appendChild(el('th', { rowspan: '2' }, 'R'));
+  h1.appendChild(el('th', { rowspan: '2' }, 'K'));
+  for (let p = 0; p < nPlayers(); p++) h1.appendChild(el('th', { colspan: '4', class: 'pname' }, pName(p)));
+  htbl.appendChild(h1);
+  const h2row = el('tr');
+  for (let p = 0; p < nPlayers(); p++) {
+    h2row.appendChild(el('th', { class: 'sub grp' }, 'T'));
+    h2row.appendChild(el('th', { class: 'sub' }, 'S'));
+    h2row.appendChild(el('th', { class: 'sub' }, '±'));
+    h2row.appendChild(el('th', { class: 'sub pk' }, 'P'));
+  }
+  htbl.appendChild(h2row);
+  for (const log of state.history) {
+    const tr = el('tr');
+    tr.appendChild(el('td', { class: 'r' }, String(log.round)));
+    tr.appendChild(el('td', {}, String(log.cards)));
+    for (let p = 0; p < nPlayers(); p++) {
+      const bonus = (log.plus5[p] - log.minus5[p]) * 5;
+      const matched = log.predictions[p] === log.tricks[p];
+      tr.appendChild(el('td', { class: 'sub grp' }, String(log.predictions[p])));
+      tr.appendChild(el('td', { class: 'sub ' + (matched ? 'delta-good' : 'delta-bad') }, String(log.tricks[p])));
+      tr.appendChild(el('td', { class: 'sub ' + (bonus > 0 ? 'delta-good' : bonus < 0 ? 'delta-bad' : '') }, bonus === 0 ? '–' : (bonus > 0 ? '+' + bonus : String(bonus))));
+      tr.appendChild(el('td', { class: 'sub pk ' + (log.scores[p] > 0 ? 'delta-good' : log.scores[p] < 0 ? 'delta-bad' : '') }, (log.scores[p] >= 0 ? '+' : '') + log.scores[p]));
+    }
+    htbl.appendChild(tr);
+  }
+  const totalsRow = el('tr', { class: 'totals-row' });
+  totalsRow.appendChild(el('td', { class: 'r', style: 'color:var(--accent)' }, 'Σ'));
+  totalsRow.appendChild(el('td', {}, ''));
+  for (let p = 0; p < nPlayers(); p++) {
+    totalsRow.appendChild(el('td', { class: 'sub grp', colspan: '3', style: 'color:var(--text-dimmer); text-align:right;' }, 'Gesamt'));
+    totalsRow.appendChild(el('td', { class: 'sub pk', style: 'color:var(--text)' }, String(state.totals[p])));
+  }
+  htbl.appendChild(totalsRow);
+  wrap.appendChild(htbl);
+  hsec.appendChild(wrap);
+  root.appendChild(hsec);
+
+  root.appendChild(el('button', { class: 'btn-primary', onclick: () => { if (confirm('Neues Spiel mit gleichen Spielern?')) { state.phase = 'setup'; save(); render(); } } }, 'NEUES SPIEL'));
+  root.appendChild(el('button', { class: 'btn-secondary', onclick: () => { if (confirm('Alles zurücksetzen?')) reset(); } }, 'KOMPLETT ZURÜCKSETZEN'));
+  return root;
+}
+
+function renderSidebar() {
+  const sb = el('div', { class: 'sidebar' });
+  sb.appendChild(renderLogo());
+  sb.appendChild(el('div', { class: 'sidebar-divider' }));
+  // Ansicht-Schalter
+  const viewRow = el('div', { class: 'view-toggle' });
+  const vl = el('div', { class: 'vt-label' });
+  vl.appendChild(el('div', { class: 'vt-t' }, 'Ansicht'));
+  vl.appendChild(el('div', { class: 'vt-s' }, state.compact ? 'Kompakt' : 'Normal'));
+  viewRow.appendChild(vl);
+  viewRow.appendChild(el('div', { class: 'switch' + (state.compact ? ' on' : ''), onclick: () => { state.compact = !state.compact; save(); render(); } }));
+  sb.appendChild(viewRow);
+  const graphRow = el('div', { class: 'view-toggle', style: 'margin-top:12px;' });
+  const gl = el('div', { class: 'vt-label' });
+  gl.appendChild(el('div', { class: 'vt-t' }, 'Graph je Runde'));
+  gl.appendChild(el('div', { class: 'vt-s' }, state.showRoundGraph ? 'Wird angezeigt' : 'Ausgeblendet'));
+  graphRow.appendChild(gl);
+  graphRow.appendChild(el('div', { class: 'switch' + (state.showRoundGraph ? ' on' : ''), onclick: () => { state.showRoundGraph = !state.showRoundGraph; save(); render(); } }));
+  sb.appendChild(graphRow);
+  sb.appendChild(el('div', { class: 'sidebar-divider' }));
+  sb.appendChild(el('div', { class: 'sidebar-title' }, 'STEUERUNG'));
+  let items = [];
+  if (state.phase === 'setup') {
+    items = [{ keys: ['Enter'], desc: 'Nächstes Feld / Start' }, { keys: ['Klick'], desc: 'Geber & Optionen wählen' }];
+  } else if (state.phase === 'playing' && state.subPhase === 'predict') {
+    items = [
+      { keys: ['0–9'], desc: 'Tipp eingeben' },
+      { keys: ['Enter'], desc: 'Abgeben · leer = 0' },
+      { keys: ['⌫'], desc: 'Letzten Tipp zurück' },
+      { keys: ['Klick'], desc: 'Zahl direkt wählen' },
+    ];
+  } else if (state.phase === 'playing' && state.subPhase === 'results') {
+    items = [
+      { keys: ['0–9'], desc: 'Wert eingeben' },
+      { keys: ['Enter'], desc: 'Speichern + weiter' },
+      { keys: ['→'], desc: 'Nächstes Feld' },
+      { keys: ['←'], desc: 'Ein Feld zurück' },
+      { keys: ['↑', '↓'], desc: 'Hoch / runter zählen' },
+      { keys: ['Enter'], desc: 'Letztes Feld → abschließen' },
+    ];
+  } else if (state.phase === 'playing' && state.subPhase === 'summary') {
+    items = [{ keys: ['Enter'], desc: 'Nächste Runde' }];
+  } else {
+    items = [{ keys: ['Klick'], desc: 'Neues Spiel starten' }];
+  }
+  for (const it of items) {
+    const row = el('div', { class: 'ctrl-item' });
+    const keys = el('div', { class: 'ctrl-keys' });
+    it.keys.forEach(k => keys.appendChild(el('kbd', {}, k)));
+    row.appendChild(keys);
+    row.appendChild(el('div', { class: 'ctrl-desc' }, it.desc));
+    sb.appendChild(row);
+  }
+  if (state.phase === 'playing' && state.totals.length) {
+    sb.appendChild(el('div', { class: 'sidebar-divider' }));
+    sb.appendChild(el('div', { class: 'sidebar-title' }, 'PUNKTESTAND'));
+    const sorted = [...Array(nPlayers()).keys()].sort((a, b) => state.totals[b] - state.totals[a]);
+    sorted.forEach((p, rank) => {
+      const row = el('div', { class: 'mini-score' + (rank === 0 ? ' lead' : '') });
+      row.appendChild(el('span', { class: 'mn' }, pName(p)));
+      row.appendChild(el('span', { class: 'mv' }, String(state.totals[p])));
+      sb.appendChild(row);
+    });
+  }
+  sb.appendChild(el('div', { class: 'sidebar-divider' }));
+  sb.appendChild(el('a', { class: 'reset-link', onclick: () => { if (confirm('Das ganze Spiel wirklich komplett zurücksetzen? Alle Punkte gehen verloren.')) reset(); } }, '⟲ Spiel zurücksetzen'));
+  return sb;
+}
+
+function render() {
+  const active = document.activeElement;
+  const prevFocusId = active && active.dataset ? active.dataset.focusId : null;
+  const isNameField = prevFocusId && prevFocusId.indexOf('name') === 0;
+  const selStart = isNameField && active.selectionStart != null ? active.selectionStart : null;
+  const selEnd = isNameField && active.selectionEnd != null ? active.selectionEnd : null;
+  const screen = state.phase + ':' + (state.subPhase || '');
+  const screenChanged = screen !== lastScreen;
+  lastScreen = screen;
+  const app = document.getElementById('app');
+  app.className = 'app' + (state.compact ? ' compact' : '');
+  app.innerHTML = '';
+  const layout = el('div', { class: 'layout' });
+  layout.appendChild(renderSidebar());
+  const main = el('div', { class: 'main' });
+  if (state.phase === 'setup') main.appendChild(renderSetup());
+  else if (state.phase === 'playing') {
+    if (state.subPhase === 'predict') main.appendChild(renderPredict());
+    else if (state.subPhase === 'results') main.appendChild(renderResults());
+    else if (state.subPhase === 'summary') main.appendChild(renderSummary());
+  } else if (state.phase === 'gameEnd') main.appendChild(renderGameEnd());
+  layout.appendChild(main);
+  app.appendChild(layout);
+
+  // pendingFocus hat Vorrang (gezieltes Weiterspringen)
+  if (pendingFocus) {
+    const pf = pendingFocus; pendingFocus = null;
+    const target = pf === '__commit__' ? app.querySelector('[data-commit]') : app.querySelector(`[data-focus-id="${pf}"]`);
+    if (target && !target.disabled) { target.focus(); if (target.tagName === 'INPUT') target.select(); return; }
+  }
+  // Fokus auf vorheriges Feld zurücksetzen
+  if (prevFocusId) {
+    const restore = app.querySelector(`[data-focus-id="${prevFocusId}"]`);
+    if (restore) {
+      restore.focus();
+      if (restore.tagName === 'INPUT') {
+        if (isNameField && selStart != null) { try { restore.setSelectionRange(selStart, selEnd); } catch (e) {} }
+        else restore.select();
+      }
+      return;
+    }
+  }
+  // Einmaliger Start-Fokus auf erstes Namensfeld (nicht selektieren, nur fokussieren)
+  if (initialFocusPending) {
+    initialFocusPending = false;
+    const init = app.querySelector('[data-init-focus]');
+    if (init) { init.focus(); return; }
+  }
+  // Fokus auf erstes Feld nur beim Betreten des Bildschirms (nicht bei Aktionen darin)
+  if (screenChanged) {
+    const enter = app.querySelector('[data-enter-focus]');
+    if (enter) { enter.focus(); if (enter.tagName === 'INPUT') enter.select(); return; }
+  }
+  const auto = app.querySelector('[data-autofocus]');
+  if (auto) { auto.focus(); if (auto.tagName === 'INPUT') auto.select(); }
+}
+
+// Global keyboard
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  const isInput = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
+  const isButton = t && t.tagName === 'BUTTON';
+  const fid = t && t.dataset ? t.dataset.focusId : null;
+  if (e.key === 'Enter' && state.phase === 'playing' && state.subPhase === 'summary' && !isInput && !isButton) { e.preventDefault(); nextRound(); return; }
+  if (e.key === 'ArrowLeft') {
+    if (fid && fid.indexOf('name') === 0) return;
+    if (fid === 'predict' && t.value !== '') return;
+    if (state.phase === 'playing') { e.preventDefault(); goBack(); }
+  }
+});
+
+render();
+</script>
+</body>
+</html>
