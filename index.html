@@ -577,6 +577,7 @@ function renderSetup() {
       'data-focus-id': `name${i}`,
       ...(i === 0 ? { 'data-init-focus': '' } : {}),
       type: 'text', value: p.name, maxlength: 20, placeholder: `Spieler ${i + 1}`,
+      autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', name: 'no-autofill',
       onkeydown: e => {
         if (e.key === 'Enter') {
           e.preventDefault();
@@ -755,13 +756,7 @@ function makeStepper(value, min, max, onChange, focusId, autofocus) {
     },
     oninput: () => { input.value = input.value.replace(/[^0-9]/g, ''); silentSet(focusId, clamp(read())); updateResultsLive(); },
     onblur: () => { silentSet(focusId, clamp(read())); },
-    onfocus: () => {
-      input.select();
-      if (focusId[0] === 't' || focusId[0] === 'p' || focusId[0] === 'm') {
-        const row = input.closest('.result-row');
-        if (row) setTimeout(() => { try { row.scrollIntoView({ block: 'start', behavior: 'auto' }); } catch (e) {} }, 80);
-      }
-    },
+    onfocus: () => input.select(),
   };
   if (autofocus) attrs['data-enter-focus'] = '';
   if (focusId[0] === 'f') attrs['tabindex'] = '-1';
