@@ -1136,13 +1136,13 @@ function render() {
   if (pendingFocus) {
     const pf = pendingFocus; pendingFocus = null;
     const target = pf === '__commit__' ? app.querySelector('[data-commit]') : app.querySelector(`[data-focus-id="${pf}"]`);
-    if (target && !target.disabled) { target.focus(); if (target.tagName === 'INPUT') target.select(); return; }
+    if (target && !target.disabled) { try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); } if (target.tagName === 'INPUT') target.select(); return; }
   }
   // Fokus auf vorheriges Feld zurücksetzen
   if (prevFocusId) {
     const restore = app.querySelector(`[data-focus-id="${prevFocusId}"]`);
     if (restore) {
-      restore.focus();
+      try { restore.focus({ preventScroll: true }); } catch (e) { restore.focus(); }
       if (restore.tagName === 'INPUT') {
         if (isNameField && selStart != null) { try { restore.setSelectionRange(selStart, selEnd); } catch (e) {} }
         else restore.select();
@@ -1150,19 +1150,19 @@ function render() {
       return;
     }
   }
-  // Einmaliger Start-Fokus auf erstes Namensfeld (nicht selektieren, nur fokussieren)
+  // Einmaliger Start-Fokus auf erstes Namensfeld
   if (initialFocusPending) {
     initialFocusPending = false;
     const init = app.querySelector('[data-init-focus]');
-    if (init) { init.focus(); return; }
+    if (init) { try { init.focus({ preventScroll: true }); } catch (e) { init.focus(); } return; }
   }
-  // Fokus auf erstes Feld nur beim Betreten des Bildschirms (nicht bei Aktionen darin)
+  // Fokus auf erstes Feld nur beim Betreten des Bildschirms
   if (screenChanged) {
     const enter = app.querySelector('[data-enter-focus]');
-    if (enter) { enter.focus(); if (enter.tagName === 'INPUT') enter.select(); return; }
+    if (enter) { try { enter.focus({ preventScroll: true }); } catch (e) { enter.focus(); } if (enter.tagName === 'INPUT') enter.select(); return; }
   }
   const auto = app.querySelector('[data-autofocus]');
-  if (auto) { auto.focus(); if (auto.tagName === 'INPUT') auto.select(); }
+  if (auto) { try { auto.focus({ preventScroll: true }); } catch (e) { auto.focus(); } if (auto.tagName === 'INPUT') auto.select(); }
 }
 
 // Global keyboard
