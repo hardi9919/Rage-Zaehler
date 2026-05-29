@@ -34,7 +34,11 @@
 }
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html { overscroll-behavior: none; overflow-x: hidden; background: #0a0a0a; }
-body { overscroll-behavior: none; }
+body { overscroll-behavior: none; background-color: #0a0a0a; }
+body::before {
+  content: ''; position: fixed; top: -100px; left: -100px; right: -100px; bottom: -100px;
+  background: #0a0a0a; z-index: -10; pointer-events: none;
+}
 body {
   font-family: 'Outfit', system-ui, sans-serif;
   background: radial-gradient(ellipse 80% 50% at 50% -10%, #2a0a0a 0%, transparent 50%), #0a0a0a;
@@ -193,7 +197,7 @@ input { -webkit-user-select: text; user-select: text; }
 }
 .stepper-input:focus { background: rgba(239,68,68,0.2); }
 
-.result-row { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; margin-bottom: 6px; }
+.result-row { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; margin-bottom: 6px; scroll-margin-top: 16px; }
 .result-row .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .result-row .name-area { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }
 .result-row .pred-pill { font-size: 11px; color: var(--text-dim); background: var(--surface-3); padding: 2px 8px; border-radius: 6px; font-weight: 600; flex-shrink: 0; }
@@ -204,6 +208,16 @@ input { -webkit-user-select: text; user-select: text; }
 .result-row .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .ctrl-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ctrl-cell .lbl { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-dim); text-align: center; }
+.fehler-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.fehler-row .fl { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-dimmer); }
+.fehler-row .stepper { width: 120px; flex-shrink: 0; }
+.play-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 12px; }
+.play-row { display: flex; justify-content: space-between; align-items: center; background: var(--surface-2); border-radius: 10px; padding: 12px 14px; gap: 12px; }
+.play-row.starter { background: rgba(239,68,68,0.15); border: 1px solid var(--accent); }
+.play-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; min-width: 0; flex-wrap: wrap; }
+.play-tip { font-family: 'Bungee', sans-serif; font-size: 22px; color: var(--text); flex-shrink: 0; }
+.play-row.starter .play-tip { color: var(--accent); }
+.badge.dim { background: var(--surface-3); color: var(--text-dim); }
 
 .sum-bar { background: var(--surface-2); border-radius: 10px; padding: 10px 14px; margin: 10px 0 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
 .sum-bar.ok { background: rgba(34,197,94,0.1); color: var(--good); }
@@ -290,6 +304,7 @@ function defaultState() {
     tricksWon: [],
     plus5: [],
     minus5: [],
+    errors: [],
     totals: [],
     history: [],
   };
@@ -323,6 +338,7 @@ function silentSet(focusId, v) {
   if (focusId[0] === 't') state.tricksWon[i] = Math.max(0, Math.min(cards(state.round), v));
   else if (focusId[0] === 'p') state.plus5[i] = Math.max(0, Math.min(3, v));
   else if (focusId[0] === 'm') state.minus5[i] = Math.max(0, Math.min(3, v));
+  else if (focusId[0] === 'f') state.errors[i] = Math.max(0, Math.min(9, v));
   save();
 }
 function commitActiveStepper() {
@@ -355,6 +371,8 @@ function goBack() {
   if (state.subPhase === 'predict') {
     if (state.predictTurn > 0) undoPrediction();
     else if (state.history.length > 0) editLastRound();
+  } else if (state.subPhase === 'play') {
+    backFromPlay();
   } else if (state.subPhase === 'results') {
     commitActiveStepper();
     const a = document.activeElement;
@@ -363,6 +381,7 @@ function goBack() {
     const idx = fid ? order.indexOf(fid) : -1;
     if (idx > 0) { pendingFocus = order[idx - 1]; render(); }
     else if (idx === 0) { backFromResults(); }
+    else if (fid && fid[0] === 'f') { pendingFocus = `m${parseInt(fid.slice(1), 10)}`; render(); }
     else { pendingFocus = order[order.length - 1]; render(); }
   } else if (state.subPhase === 'summary') {
     editLastRound();
@@ -388,6 +407,7 @@ function computeRoundScore(p) {
   let s = state.tricksWon[p];
   s += state.plus5[p] * 5;
   s -= state.minus5[p] * 5;
+  s -= (state.errors[p] || 0) * 20;
   s += (state.predictions[p] === state.tricksWon[p]) ? 10 : -5;
   return s;
 }
@@ -398,6 +418,7 @@ function initRound() {
   state.tricksWon = new Array(nPlayers()).fill(0);
   state.plus5 = new Array(nPlayers()).fill(0);
   state.minus5 = new Array(nPlayers()).fill(0);
+  state.errors = new Array(nPlayers()).fill(0);
   state.predictTurn = 0;
   state.subPhase = 'predict';
 }
@@ -414,7 +435,7 @@ function submitPrediction(value) {
   const order = getTurnOrder(state.round);
   state.predictions[order[state.predictTurn]] = value;
   state.predictTurn++;
-  if (state.predictTurn >= nPlayers()) state.subPhase = 'results';
+  if (state.predictTurn >= nPlayers()) state.subPhase = 'play';
   save(); render();
 }
 function undoPrediction() {
@@ -434,7 +455,8 @@ function commitRound() {
   state.history.push({
     round: state.round, cards: cards(state.round), dealer: getDealerIdx(state.round),
     predictions: [...state.predictions], tricks: [...state.tricksWon],
-    plus5: [...state.plus5], minus5: [...state.minus5], scores: roundScores, totals: [...state.totals],
+    plus5: [...state.plus5], minus5: [...state.minus5], errors: [...state.errors],
+    scores: roundScores, totals: [...state.totals],
   });
   state.subPhase = 'summary';
   save(); render();
@@ -452,16 +474,35 @@ function editLastRound() {
   state.tricksWon = [...last.tricks];
   state.plus5 = [...last.plus5];
   state.minus5 = [...last.minus5];
+  state.errors = [...(last.errors || new Array(nPlayers()).fill(0))];
   state.predictTurn = nPlayers();
   state.subPhase = 'results';
   state.phase = 'playing';
   save(); render();
 }
 function backFromResults() {
-  state.predictTurn = nPlayers() - 1;
-  state.predictions[getTurnOrder(state.round)[nPlayers() - 1]] = null;
-  state.subPhase = 'predict';
+  // Aus Stiche-Eintrag zurück zur Spielen-Übersicht
+  state.subPhase = 'play';
   save(); render();
+}
+function goToResults() {
+  state.subPhase = 'results';
+  save(); render();
+}
+function backFromPlay() {
+  // Letzten Tipp zurücknehmen
+  state.subPhase = 'predict';
+  state.predictTurn = nPlayers() - 1;
+  state.predictions[getTurnOrder(state.round)[state.predictTurn]] = null;
+  save(); render();
+}
+function gameHasErrors() {
+  if (state.history.some(log => (log.errors || []).some(e => e > 0))) return true;
+  if ((state.errors || []).some(e => e > 0)) return true;
+  return false;
+}
+function roundHasErrors(log) {
+  return (log.errors || []).some(e => e > 0);
 }
 
 // ============ RENDER HELPERS ============
@@ -628,7 +669,7 @@ function renderPredict() {
 
     const wrap = el('div', { class: 'predict-input-wrap' });
     const input = el('input', {
-      'data-focus-id': 'predict', 'data-autofocus': '', type: 'text', inputmode: 'numeric',
+      'data-focus-id': 'predict', 'data-autofocus': '', type: 'text', inputmode: 'none',
       maxlength: maxCards >= 10 ? '2' : '1', class: 'num-input', placeholder: 'Tippen + Enter',
       onkeydown: e => {
         if (e.key === 'Enter') {
@@ -673,9 +714,15 @@ function makeStepper(value, min, max, onChange, focusId, autofocus) {
     onkeydown: e => {
       if (e.key === 'Enter' || e.key === 'ArrowRight') {
         e.preventDefault();
-        const order = inputOrder();
-        const idx = order.indexOf(focusId);
-        pendingFocus = (idx >= 0 && idx < order.length - 1) ? order[idx + 1] : '__commit__';
+        if (focusId[0] === 'f') {
+          // Fehler-Feld: springt nach nächster Spielerzeile oder zum Abschließen-Button
+          const i = parseInt(focusId.slice(1), 10);
+          pendingFocus = i + 1 < nPlayers() ? `t${i + 1}` : '__commit__';
+        } else {
+          const order = inputOrder();
+          const idx = order.indexOf(focusId);
+          pendingFocus = (idx >= 0 && idx < order.length - 1) ? order[idx + 1] : '__commit__';
+        }
         onChange(clamp(read()));
       } else if (e.key === 'ArrowUp') { e.preventDefault(); onChange(clamp(read() + 1)); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); onChange(clamp(read() - 1)); }
@@ -683,13 +730,49 @@ function makeStepper(value, min, max, onChange, focusId, autofocus) {
     },
     oninput: () => { input.value = input.value.replace(/[^0-9]/g, ''); silentSet(focusId, clamp(read())); updateResultsLive(); },
     onblur: () => { silentSet(focusId, clamp(read())); },
-    onfocus: () => input.select(),
+    onfocus: () => {
+      input.select();
+      const row = input.closest('.result-row');
+      if (row) setTimeout(() => { try { row.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {} }, 100);
+    },
   };
   if (autofocus) attrs['data-enter-focus'] = '';
+  if (focusId[0] === 'f') attrs['tabindex'] = '-1';
   input = el('input', attrs);
   s.appendChild(input);
   s.appendChild(el('button', { tabindex: '-1', onclick: () => onChange(clamp(read() + 1)) }, '+'));
   return s;
+}
+
+function renderPlay() {
+  const root = document.createDocumentFragment();
+  root.appendChild(renderRoundBanner());
+  const startIdx = getTurnOrder(state.round)[0];
+  const sec = el('div', { class: 'section' });
+  sec.appendChild(el('h2', {}, 'JETZT SPIELEN'));
+  sec.appendChild(el('p', { class: 'hint', html: `<b style="color:var(--accent)">${esc(pName(startIdx))}</b> spielt die erste Karte. Die folgenden Tipps wurden abgegeben:` }));
+  const list = el('div', { class: 'play-list' });
+  for (let i = 0; i < nPlayers(); i++) {
+    const row = el('div', { class: 'play-row' + (i === startIdx ? ' starter' : '') });
+    const nm = el('div', { class: 'play-name' });
+    nm.appendChild(el('span', {}, pName(i)));
+    if (i === getDealerIdx(state.round)) nm.appendChild(el('span', { class: 'badge dim' }, 'GEBER'));
+    if (i === startIdx) nm.appendChild(el('span', { class: 'badge' }, 'BEGINNT'));
+    row.appendChild(nm);
+    row.appendChild(el('div', { class: 'play-tip' }, String(state.predictions[i])));
+    list.appendChild(row);
+  }
+  sec.appendChild(list);
+  const sum = state.predictions.reduce((a, b) => a + b, 0);
+  const target = cards(state.round);
+  const sumBar = el('div', { class: 'sum-bar ' + (sum === target ? 'error' : 'ok') });
+  sumBar.appendChild(el('span', {}, sum === target ? 'Tipps gehen genau auf' : 'Tipps gehen nicht auf'));
+  sumBar.appendChild(el('span', { class: 'sum-val', html: `${sum} <span style="color:var(--text-dim); font-size:13px;">/ ${target}</span>` }));
+  sec.appendChild(sumBar);
+  sec.appendChild(el('button', { class: 'btn-primary', 'data-enter-focus': '', onclick: goToResults }, 'STICHE EINTRAGEN →'));
+  sec.appendChild(el('button', { class: 'btn-secondary', onclick: backFromPlay }, '← TIPPS BEARBEITEN'));
+  root.appendChild(sec);
+  return root;
 }
 
 function renderResults() {
@@ -727,6 +810,10 @@ function renderResults() {
     cellM.appendChild(makeStepper(state.minus5[i], 0, 3, v => setMinus5(i, v), `m${i}`));
     ctrl.appendChild(cellM);
     row.appendChild(ctrl);
+    const fehlerRow = el('div', { class: 'fehler-row' });
+    fehlerRow.appendChild(el('span', { class: 'fl' }, 'FEHLER (−20)'));
+    fehlerRow.appendChild(makeStepper(state.errors[i] || 0, 0, 9, v => { state.errors[i] = v; save(); render(); }, `f${i}`));
+    row.appendChild(fehlerRow);
     grid.appendChild(row);
   }
   sec.appendChild(grid);
@@ -745,12 +832,16 @@ function renderResults() {
 
 function renderSummary() {
   const log = state.history[state.history.length - 1];
+  const showErr = roundHasErrors(log);
   const root = document.createDocumentFragment();
   const sec = el('div', { class: 'section' });
   sec.appendChild(el('h2', {}, `RUNDE ${log.round} ABGESCHLOSSEN`));
   const tbl = el('table', { class: 'summary-table' });
   const hr = el('tr');
-  ['Spieler', 'Tipp', 'Stiche', '±5', 'Runde', 'Gesamt'].forEach((t, i) => hr.appendChild(el('th', { class: i === 0 ? 'l' : '' }, t)));
+  const headers = ['Spieler', 'Tipp', 'Stiche', '±5'];
+  if (showErr) headers.push('Fehler');
+  headers.push('Runde', 'Gesamt');
+  headers.forEach((t, i) => hr.appendChild(el('th', { class: i === 0 ? 'l' : '' }, t)));
   tbl.appendChild(hr);
   for (let p = 0; p < nPlayers(); p++) {
     const tr = el('tr');
@@ -761,6 +852,10 @@ function renderSummary() {
     let bStr = '—', bCls = 'delta-zero';
     if (bonus > 0) { bStr = `+${bonus * 5}`; bCls = 'delta-good'; } else if (bonus < 0) { bStr = `${bonus * 5}`; bCls = 'delta-bad'; }
     tr.appendChild(el('td', { class: bCls }, bStr));
+    if (showErr) {
+      const er = (log.errors || [])[p] || 0;
+      tr.appendChild(el('td', { class: er > 0 ? 'delta-bad' : 'delta-zero' }, er > 0 ? `−${er * 20}` : '—'));
+    }
     const s = log.scores[p];
     tr.appendChild(el('td', { class: 'score ' + (s > 0 ? 'delta-good' : s < 0 ? 'delta-bad' : 'delta-zero') }, (s >= 0 ? '+' : '') + s));
     tr.appendChild(el('td', { class: 'score' }, String(log.totals[p])));
@@ -859,19 +954,22 @@ function renderGameEnd() {
 
   const hsec = el('div', { class: 'section' });
   hsec.appendChild(el('h2', {}, 'ALLE RUNDEN'));
-  hsec.appendChild(el('p', { class: 'hint' }, 'T = Tipp · S = Stiche · ± = Aktionskarten (+5/−5) · P = Rundenpunkte. Bei Treffer (T=S) gibt es +10, sonst −5.'));
+  const showErrGlobal = gameHasErrors();
+  hsec.appendChild(el('p', { class: 'hint' }, 'T = Tipp · S = Stiche · ± = Aktionskarten (+5/−5)' + (showErrGlobal ? ' · F = Fehler (−20)' : '') + ' · P = Rundenpunkte. Bei Treffer (T=S) gibt es +10, sonst −5.'));
   const wrap = el('div', { class: 'history-wrap' });
   const htbl = el('table', { class: 'history-table' });
+  const colsPerPlayer = showErrGlobal ? 5 : 4;
   const h1 = el('tr');
   h1.appendChild(el('th', { rowspan: '2' }, 'R'));
   h1.appendChild(el('th', { rowspan: '2' }, 'K'));
-  for (let p = 0; p < nPlayers(); p++) h1.appendChild(el('th', { colspan: '4', class: 'pname' }, pName(p)));
+  for (let p = 0; p < nPlayers(); p++) h1.appendChild(el('th', { colspan: String(colsPerPlayer), class: 'pname' }, pName(p)));
   htbl.appendChild(h1);
   const h2row = el('tr');
   for (let p = 0; p < nPlayers(); p++) {
     h2row.appendChild(el('th', { class: 'sub grp' }, 'T'));
     h2row.appendChild(el('th', { class: 'sub' }, 'S'));
     h2row.appendChild(el('th', { class: 'sub' }, '±'));
+    if (showErrGlobal) h2row.appendChild(el('th', { class: 'sub' }, 'F'));
     h2row.appendChild(el('th', { class: 'sub pk' }, 'P'));
   }
   htbl.appendChild(h2row);
@@ -885,6 +983,10 @@ function renderGameEnd() {
       tr.appendChild(el('td', { class: 'sub grp' }, String(log.predictions[p])));
       tr.appendChild(el('td', { class: 'sub ' + (matched ? 'delta-good' : 'delta-bad') }, String(log.tricks[p])));
       tr.appendChild(el('td', { class: 'sub ' + (bonus > 0 ? 'delta-good' : bonus < 0 ? 'delta-bad' : '') }, bonus === 0 ? '–' : (bonus > 0 ? '+' + bonus : String(bonus))));
+      if (showErrGlobal) {
+        const er = (log.errors || [])[p] || 0;
+        tr.appendChild(el('td', { class: 'sub ' + (er > 0 ? 'delta-bad' : '') }, er > 0 ? `−${er * 20}` : '–'));
+      }
       tr.appendChild(el('td', { class: 'sub pk ' + (log.scores[p] > 0 ? 'delta-good' : log.scores[p] < 0 ? 'delta-bad' : '') }, (log.scores[p] >= 0 ? '+' : '') + log.scores[p]));
     }
     htbl.appendChild(tr);
@@ -893,7 +995,7 @@ function renderGameEnd() {
   totalsRow.appendChild(el('td', { class: 'r', style: 'color:var(--accent)' }, 'Σ'));
   totalsRow.appendChild(el('td', {}, ''));
   for (let p = 0; p < nPlayers(); p++) {
-    totalsRow.appendChild(el('td', { class: 'sub grp', colspan: '3', style: 'color:var(--text-dimmer); text-align:right;' }, 'Gesamt'));
+    totalsRow.appendChild(el('td', { class: 'sub grp', colspan: String(colsPerPlayer - 1), style: 'color:var(--text-dimmer); text-align:right;' }, 'Gesamt'));
     totalsRow.appendChild(el('td', { class: 'sub pk', style: 'color:var(--text)' }, String(state.totals[p])));
   }
   htbl.appendChild(totalsRow);
@@ -937,6 +1039,8 @@ function renderSidebar() {
       { keys: ['⌫'], desc: 'Letzten Tipp zurück' },
       { keys: ['Klick'], desc: 'Zahl direkt wählen' },
     ];
+  } else if (state.phase === 'playing' && state.subPhase === 'play') {
+    items = [{ keys: ['Enter'], desc: 'Stiche eintragen' }, { keys: ['←'], desc: 'Tipps bearbeiten' }];
   } else if (state.phase === 'playing' && state.subPhase === 'results') {
     items = [
       { keys: ['0–9'], desc: 'Wert eingeben' },
@@ -984,6 +1088,9 @@ function render() {
   const screen = state.phase + ':' + (state.subPhase || '');
   const screenChanged = screen !== lastScreen;
   lastScreen = screen;
+  if (screenChanged) {
+    try { window.scrollTo({ top: 0, left: 0, behavior: 'auto' }); } catch (e) { window.scrollTo(0, 0); }
+  }
   const app = document.getElementById('app');
   app.className = 'app' + (state.compact ? ' compact' : '');
   app.innerHTML = '';
@@ -993,6 +1100,7 @@ function render() {
   if (state.phase === 'setup') main.appendChild(renderSetup());
   else if (state.phase === 'playing') {
     if (state.subPhase === 'predict') main.appendChild(renderPredict());
+    else if (state.subPhase === 'play') main.appendChild(renderPlay());
     else if (state.subPhase === 'results') main.appendChild(renderResults());
     else if (state.subPhase === 'summary') main.appendChild(renderSummary());
   } else if (state.phase === 'gameEnd') main.appendChild(renderGameEnd());
@@ -1039,6 +1147,7 @@ document.addEventListener('keydown', e => {
   const isButton = t && t.tagName === 'BUTTON';
   const fid = t && t.dataset ? t.dataset.focusId : null;
   if (e.key === 'Enter' && state.phase === 'playing' && state.subPhase === 'summary' && !isInput && !isButton) { e.preventDefault(); nextRound(); return; }
+  if (e.key === 'Enter' && state.phase === 'playing' && state.subPhase === 'play' && !isInput && !isButton) { e.preventDefault(); goToResults(); return; }
   if (e.key === 'ArrowLeft') {
     if (fid && fid.indexOf('name') === 0) return;
     if (fid === 'predict' && t.value !== '') return;
