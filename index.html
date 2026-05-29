@@ -39,6 +39,11 @@ body::before {
   content: ''; position: fixed; top: -100px; left: -100px; right: -100px; bottom: -100px;
   background: #0a0a0a; z-index: -10; pointer-events: none;
 }
+body::after {
+  content: ''; position: fixed; top: 0; left: 0; right: 0;
+  height: calc(env(safe-area-inset-top, 0px) + 4px);
+  background: #0a0a0a; z-index: 9999; pointer-events: none;
+}
 body {
   font-family: 'Outfit', system-ui, sans-serif;
   background: radial-gradient(ellipse 80% 50% at 50% -10%, #2a0a0a 0%, transparent 50%), #0a0a0a;
@@ -317,7 +322,25 @@ let lastScreen = null;
 function loadState() {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
-    if (s) { const p = JSON.parse(s); if (p && p.players && p.players.length >= MIN_PLAYERS) return p; }
+    if (s) {
+      const p = JSON.parse(s);
+      if (p && p.players && p.players.length >= MIN_PLAYERS) {
+        const n = p.players.length;
+        if (!Array.isArray(p.errors)) p.errors = new Array(n).fill(0);
+        if (!Array.isArray(p.tricksWon)) p.tricksWon = new Array(n).fill(0);
+        if (!Array.isArray(p.plus5)) p.plus5 = new Array(n).fill(0);
+        if (!Array.isArray(p.minus5)) p.minus5 = new Array(n).fill(0);
+        if (!Array.isArray(p.predictions)) p.predictions = new Array(n).fill(null);
+        if (!Array.isArray(p.totals)) p.totals = new Array(n).fill(0);
+        if (!Array.isArray(p.history)) p.history = [];
+        if (typeof p.compact !== 'boolean') p.compact = true;
+        if (typeof p.showRoundGraph !== 'boolean') p.showRoundGraph = false;
+        for (const log of p.history) {
+          if (!Array.isArray(log.errors)) log.errors = new Array(n).fill(0);
+        }
+        return p;
+      }
+    }
   } catch (e) {}
   return defaultState();
 }
@@ -338,7 +361,7 @@ function silentSet(focusId, v) {
   if (focusId[0] === 't') state.tricksWon[i] = Math.max(0, Math.min(cards(state.round), v));
   else if (focusId[0] === 'p') state.plus5[i] = Math.max(0, Math.min(3, v));
   else if (focusId[0] === 'm') state.minus5[i] = Math.max(0, Math.min(3, v));
-  else if (focusId[0] === 'f') state.errors[i] = Math.max(0, Math.min(9, v));
+  else if (focusId[0] === 'f') { if (!state.errors) state.errors = new Array(nPlayers()).fill(0); state.errors[i] = Math.max(0, Math.min(9, v)); }
   save();
 }
 function commitActiveStepper() {
@@ -407,7 +430,7 @@ function computeRoundScore(p) {
   let s = state.tricksWon[p];
   s += state.plus5[p] * 5;
   s -= state.minus5[p] * 5;
-  s -= (state.errors[p] || 0) * 20;
+  s -= ((state.errors || [])[p] || 0) * 20;
   s += (state.predictions[p] === state.tricksWon[p]) ? 10 : -5;
   return s;
 }
@@ -732,8 +755,10 @@ function makeStepper(value, min, max, onChange, focusId, autofocus) {
     onblur: () => { silentSet(focusId, clamp(read())); },
     onfocus: () => {
       input.select();
-      const row = input.closest('.result-row');
-      if (row) setTimeout(() => { try { row.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {} }, 100);
+      if (focusId[0] === 't') {
+        const row = input.closest('.result-row');
+        if (row) setTimeout(() => { try { row.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {} }, 100);
+      }
     },
   };
   if (autofocus) attrs['data-enter-focus'] = '';
@@ -812,7 +837,7 @@ function renderResults() {
     row.appendChild(ctrl);
     const fehlerRow = el('div', { class: 'fehler-row' });
     fehlerRow.appendChild(el('span', { class: 'fl' }, 'FEHLER (−20)'));
-    fehlerRow.appendChild(makeStepper(state.errors[i] || 0, 0, 9, v => { state.errors[i] = v; save(); render(); }, `f${i}`));
+    fehlerRow.appendChild(makeStepper((state.errors || [])[i] || 0, 0, 9, v => { if (!state.errors) state.errors = new Array(nPlayers()).fill(0); state.errors[i] = v; save(); render(); }, `f${i}`));
     row.appendChild(fehlerRow);
     grid.appendChild(row);
   }
