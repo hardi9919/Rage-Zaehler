@@ -693,6 +693,7 @@ function renderPredict() {
     const wrap = el('div', { class: 'predict-input-wrap' });
     const input = el('input', {
       'data-focus-id': 'predict', 'data-autofocus': '', type: 'text', inputmode: 'none',
+      autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', name: 'no-autofill',
       maxlength: maxCards >= 10 ? '2' : '1', class: 'num-input', placeholder: 'Tippen + Enter',
       onkeydown: e => {
         if (e.key === 'Enter') {
@@ -734,6 +735,7 @@ function makeStepper(value, min, max, onChange, focusId, autofocus) {
   s.appendChild(el('button', { tabindex: '-1', onclick: () => onChange(clamp(read() - 1)) }, '−'));
   const attrs = {
     'data-focus-id': focusId, type: 'text', inputmode: 'numeric', class: 'stepper-input', value: String(value), maxlength: '2',
+    autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', name: 'no-autofill',
     onkeydown: e => {
       if (e.key === 'Enter' || e.key === 'ArrowRight') {
         e.preventDefault();
@@ -755,9 +757,9 @@ function makeStepper(value, min, max, onChange, focusId, autofocus) {
     onblur: () => { silentSet(focusId, clamp(read())); },
     onfocus: () => {
       input.select();
-      if (focusId[0] === 't') {
+      if (focusId[0] === 't' || focusId[0] === 'p' || focusId[0] === 'm') {
         const row = input.closest('.result-row');
-        if (row) setTimeout(() => { try { row.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {} }, 100);
+        if (row) setTimeout(() => { try { row.scrollIntoView({ block: 'start', behavior: 'auto' }); } catch (e) {} }, 80);
       }
     },
   };
