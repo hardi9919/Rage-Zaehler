@@ -492,6 +492,7 @@ function joinRoom(code) {
     mpRoomCode = code.toUpperCase().trim();
     mpRoomRef = ref;
     mpConnected = true;
+    sessionStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode }));
     ref.on('value', s => {
       mpViewerState = s.val();
       mpConnected = !!mpViewerState;
@@ -503,6 +504,7 @@ function joinRoom(code) {
 
 function leaveRoom() {
   if (mpRoomRef && mpMode === 'viewer') { mpRoomRef.off(); mpRoomRef.root.child('.info/connected').off(); }
+  sessionStorage.removeItem('mpViewer');
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   mpViewerPlayerId = null; mpViewerState = null; mpConnected = false;
   render();
@@ -564,7 +566,11 @@ function renderViewer() {
       s.players.forEach((p, i) => {
         grid.appendChild(el('button', {
           class: 'viewer-player-btn',
-          onclick: () => { mpViewerPlayerId = i; renderViewer(); }
+          onclick: () => {
+            mpViewerPlayerId = i;
+            try { sessionStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode, playerId: i })); } catch (e) {}
+            renderViewer();
+          }
         }, p.name || `Spieler ${i + 1}`));
       });
       wrap.appendChild(grid);
@@ -1966,7 +1972,25 @@ document.addEventListener('keydown', e => {
   }
 });
 
-render();
+// Viewer-Session nach Reload wiederherstellen
+try {
+  const saved = sessionStorage.getItem('mpViewer');
+  if (saved) {
+    const { room, playerId } = JSON.parse(saved);
+    if (room && firebaseReady()) {
+      if (playerId != null) mpViewerPlayerId = playerId;
+      joinRoom(room);
+    } else {
+      sessionStorage.removeItem('mpViewer');
+      render();
+    }
+  } else {
+    render();
+  }
+} catch (e) {
+  sessionStorage.removeItem('mpViewer');
+  render();
+}
 </script>
 <script>
 if ('serviceWorker' in navigator) {
