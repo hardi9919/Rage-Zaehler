@@ -355,6 +355,7 @@ input { -webkit-user-select: text; user-select: text; }
 .viewer-tip-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; }
 .viewer-tip-val { font-family: "Bungee",sans-serif; font-size: 18px; color: var(--text); }
 .viewer-tip-val.pending { color: var(--text-dimmer); font-size: 14px; font-family: sans-serif; font-weight: 400; }
+.viewer-pred-counter { font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface-3); border-radius: 6px; padding: 5px 10px; margin-top: 4px; }
 .viewer-pad-wrap { margin-top: 16px; }
 .viewer-pad-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; color: var(--text-dimmer); text-transform: uppercase; margin-bottom: 8px; }
 .viewer-pad { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -654,6 +655,13 @@ function renderViewer() {
         } else {
           infoBox.appendChild(el('div', { class: 'viewer-info-line' }, `Tippt gerade: ${curName}`));
         }
+        // Tipp-Zähler
+        const predDone = (s.predictions || []).filter(x => x !== null && x !== undefined).length;
+        const predSum = (s.predictions || []).reduce((a, b) => a + (b || 0), 0);
+        const total2 = s.players.length;
+        const cards2 = s.cardsThisRound || 0;
+        infoBox.appendChild(el('div', { class: 'viewer-pred-counter' },
+          `Angesagt: ${predDone}\u2009/\u2009${total2} Spieler · ${predSum}\u2009/\u2009${cards2} Stiche`));
         // Eigene Position in der Tipp-Reihenfolge
         const myPos = s.turnOrder.indexOf(pi);
         if (myPos !== -1) {
