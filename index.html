@@ -337,6 +337,19 @@ input { -webkit-user-select: text; user-select: text; }
 .viewer-lb-name { flex: 1; font-size: 14px; font-weight: 600; }
 .viewer-lb-pts { font-family: "Bungee",sans-serif; font-size: 16px; color: var(--text); }
 .viewer-name-big { font-family: "Bungee",sans-serif; font-size: 32px; color: var(--accent); }
+.viewer-graph-btn { margin-top: 14px; width: 100%; background: var(--surface-3); border: 1px solid var(--border); border-radius: 8px; color: var(--text-dim); font-size: 13px; font-weight: 600; padding: 9px; cursor: pointer; }
+.viewer-graph-btn:hover { color: var(--text); background: var(--surface-2); }
+.mp-inline-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-dim); user-select: none; -webkit-user-select: none; }
+.mp-inline-toggle:hover { color: var(--text); }
+.viewer-round-info { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.viewer-info-line { font-size: 13px; color: var(--text-dim); }
+.viewer-forbidden { font-size: 14px; font-weight: 700; color: var(--accent); background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 8px 12px; margin-top: 4px; }
+.viewer-pad-wrap { margin-top: 16px; }
+.viewer-pad-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; color: var(--text-dimmer); text-transform: uppercase; margin-bottom: 8px; }
+.viewer-pad { display: flex; flex-wrap: wrap; gap: 8px; }
+.viewer-pad-btn { width: 48px; height: 48px; border-radius: 10px; background: var(--surface-3); border: 1px solid var(--border); color: var(--text); font-size: 18px; font-weight: 700; cursor: pointer; font-family: "Bungee",sans-serif; }
+.viewer-pad-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.viewer-pad-btn.blocked { opacity: 0.25; cursor: not-allowed; text-decoration: line-through; }
 .popup-overlay { position: fixed; inset: 0; z-index: 5000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.72); backdrop-filter: blur(4px); padding: 20px; animation: fadeIn 0.25s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
 .popup-card { position: relative; background: #fff; border-radius: 14px; overflow: hidden; max-width: 300px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
@@ -383,6 +396,7 @@ let mpMode = null;      // 'host' | 'viewer' | null
 let mpRoomCode = null;
 let mpRoomRef = null;
 let mpViewerPlayerId = null;
+let mpViewerShowGraph = false;
 let mpViewerState = null;
 let mpConnected = false;
 
@@ -412,6 +426,21 @@ function startHost() {
   mpRoomCode = generateRoomCode();
   mpRoomRef = fbDb.ref('rooms/' + mpRoomCode);
   pushToFirebase();
+  // Viewer-Tipps empfangen
+  mpRoomRef.child('viewerInput').on('value', snap => {
+    const inputs = snap.val();
+    if (!inputs || !state.viewerPredictEnabled) return;
+    if (state.phase !== 'playing' || state.subPhase !== 'predict') return;
+    const order = getTurnOrder(state.round);
+    const curIdx = order[state.predictTurn];
+    if (inputs[curIdx] != null) {
+      const val = parseInt(inputs[curIdx], 10);
+      if (!isNaN(val)) {
+        mpRoomRef.child('viewerInput/' + curIdx).remove();
+        submitPrediction(Math.max(0, Math.min(cards(state.round), val)));
+      }
+    }
+  });
   window.addEventListener('beforeunload', stopHost);
   save(); render();
 }
@@ -424,13 +453,20 @@ function stopHost() {
 
 function pushToFirebase() {
   if (mpMode !== 'host' || !mpRoomRef || !state) return;
+  const dIdx = (state.phase === 'playing') ? getDealerIdx(state.round) : 0;
+  const tOrder = (state.phase === 'playing') ? getTurnOrder(state.round) : [];
   const payload = {
     round: state.round, phase: state.phase, subPhase: state.subPhase || null,
     players: state.players, predictions: state.predictions || [],
     tricksWon: state.tricksWon || [], plus5: state.plus5 || [],
     minus5: state.minus5 || [], errors: state.errors || [],
     totals: state.totals || [], history: state.history || [],
-    rulePlusMinus1: !!state.rulePlusMinus1, ts: Date.now()
+    rulePlusMinus1: !!state.rulePlusMinus1,
+    dealerIdx: dIdx, turnOrder: tOrder,
+    predictTurn: state.predictTurn || 0,
+    cardsThisRound: (state.phase === 'playing') ? cards(state.round) : 0,
+    viewerPredictEnabled: !!state.viewerPredictEnabled,
+    ts: Date.now()
   };
   mpRoomRef.set(payload).catch(e => console.warn('Firebase sync:', e));
 }
@@ -458,6 +494,42 @@ function leaveRoom() {
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   mpViewerPlayerId = null; mpViewerState = null; mpConnected = false;
   render();
+}
+
+function buildViewerChart(s) {
+  const players = s.players || [];
+  const history = s.history || [];
+  const n = players.length;
+  if (!n || !history.length) return el('div', {});
+  const W = 340, H = 180, padL = 36, padR = 12, padT = 12, padB = 24;
+  const series = players.map(() => [0]);
+  history.forEach(log => players.forEach((_, i) => series[i].push((log.totals || [])[i] || 0)));
+  const allVals = series.flat();
+  const minV = Math.min(...allVals), maxV = Math.max(...allVals);
+  const rangeV = maxV - minV || 1;
+  const cols = ['#ef4444','#3b82f6','#22c55e','#f59e0b','#a855f7','#ec4899','#14b8a6','#f97316'];
+  const xStep = (W - padL - padR) / (series[0].length - 1);
+  const yScale = v => padT + (H - padT - padB) * (1 - (v - minV) / rangeV);
+  const xScale = i => padL + i * xStep;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;margin-top:14px;border-radius:8px;background:var(--surface-3);">`;
+  [0, 0.5, 1].forEach(t => {
+    const y = padT + (H - padT - padB) * t;
+    const v = Math.round(maxV - rangeV * t);
+    svg += `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+    svg += `<text x="${padL - 4}" y="${y + 4}" text-anchor="end" fill="rgba(255,255,255,0.3)" font-size="9">${v}</text>`;
+  });
+  series.forEach((pts, i) => {
+    const d = pts.map((v, j) => `${j === 0 ? 'M' : 'L'}${xScale(j).toFixed(1)},${yScale(v).toFixed(1)}`).join(' ');
+    svg += `<path d="${d}" fill="none" stroke="${cols[i % cols.length]}" stroke-width="2" stroke-linejoin="round"/>`;
+  });
+  history.forEach((_, ri) => {
+    const x = xScale(ri + 1).toFixed(1);
+    svg += `<text x="${x}" y="${H - 6}" text-anchor="middle" fill="rgba(255,255,255,0.3)" font-size="9">${ri + 1}</text>`;
+  });
+  svg += '</svg>';
+  const wrap = el('div', {});
+  wrap.innerHTML = svg;
+  return wrap;
 }
 
 function renderViewer() {
@@ -490,9 +562,13 @@ function renderViewer() {
     return;
   }
 
-  // Main viewer screen
+  // Raum gelöscht oder Verbindung weg
   if (!s) {
-    app.appendChild(el('div', { class: 'section', html: '<p style="color:var(--text-dim);text-align:center;padding:40px 0">Verbindung unterbrochen…</p>' }));
+    const wrap = el('div', { class: 'viewer-select', style: 'text-align:center;' });
+    wrap.appendChild(el('div', { class: 'viewer-code-badge' }, mpRoomCode || '—'));
+    wrap.appendChild(el('p', { style: 'color:var(--text-dim);margin:16px 0 8px;' }, 'Der Raum wurde beendet oder die Verbindung unterbrochen.'));
+    wrap.appendChild(el('button', { class: 'btn-primary', style: 'margin-top:12px;', onclick: leaveRoom }, '← Zur Startseite'));
+    app.appendChild(wrap);
     return;
   }
 
@@ -511,6 +587,7 @@ function renderViewer() {
     const sec = el('div', { class: 'section', style: 'text-align:center;padding:48px 20px;' });
     sec.appendChild(el('div', { class: 'viewer-name-big' }, name));
     sec.appendChild(el('p', { class: 'hint', style: 'margin-top:12px;' }, 'Der Host startet das Spiel…'));
+    sec.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:20px;', onclick: leaveRoom }, '← Verlassen'));
     app.appendChild(sec);
     return;
   }
@@ -530,37 +607,96 @@ function renderViewer() {
   const m5 = (s.minus5 && s.minus5[pi]) || 0;
   const errs = (s.errors && s.errors[pi]) || 0;
 
+  const inResults = s.subPhase === 'results' || s.subPhase === 'summary' || s.phase === 'gameEnd';
   const infoGrid = el('div', { class: 'viewer-info-grid' });
 
-  const addInfo = (label, value, highlight) => {
-    const cell = el('div', { class: 'viewer-info-cell' + (highlight ? ' highlight' : '') });
+  const addCell = (label, value, cls) => {
+    const cell = el('div', { class: 'viewer-info-cell' + (cls ? ' ' + cls : '') });
     cell.appendChild(el('div', { class: 'vic-label' }, label));
     cell.appendChild(el('div', { class: 'vic-value' }, value));
     infoGrid.appendChild(cell);
   };
 
-  if (s.subPhase === 'predict') {
-    if (prediction !== null) addInfo('DEIN TIPP', String(prediction), true);
-    else addInfo('DEIN TIPP', '…', false);
+  if (!inResults) {
+    // predict / play: Tipp + Gesamt + Spielinfo
+    addCell('DEIN TIPP', prediction !== null ? String(prediction) : '…', prediction !== null ? 'highlight' : '');
+    addCell('GESAMT', String(total), '');
+    card.appendChild(infoGrid);
+
+    // Dealer + Starter
+    if (s.subPhase === 'predict' || s.subPhase === 'play') {
+      const infoBox = el('div', { class: 'viewer-round-info' });
+      if (s.dealerIdx != null && s.players && s.players[s.dealerIdx]) {
+        const dealerName = s.players[s.dealerIdx].name || `Spieler ${s.dealerIdx + 1}`;
+        infoBox.appendChild(el('div', { class: 'viewer-info-line' }, `🃏 Gibt aus: ${dealerName}`));
+      }
+      if (s.turnOrder && s.turnOrder[0] != null && s.players && s.players[s.turnOrder[0]]) {
+        const starterName = s.players[s.turnOrder[0]].name || `Spieler ${s.turnOrder[0] + 1}`;
+        infoBox.appendChild(el('div', { class: 'viewer-info-line' }, `▶ Beginnt: ${starterName}`));
+      }
+      // Verbotene Zahl für letzten Spieler
+      if (s.subPhase === 'predict' && s.rulePlusMinus1 && s.round !== 10 &&
+          s.turnOrder && s.predictTurn === s.players.length - 1 &&
+          s.turnOrder[s.predictTurn] === pi) {
+        const sumSoFar = (s.turnOrder || []).slice(0, s.players.length - 1)
+          .reduce((acc, idx) => acc + ((s.predictions || [])[idx] || 0), 0);
+        const forbidden = s.cardsThisRound - sumSoFar;
+        if (forbidden >= 0 && forbidden <= s.cardsThisRound) {
+          infoBox.appendChild(el('div', { class: 'viewer-forbidden' }, `🚫 Du darfst nicht tippen: ${forbidden}`));
+        }
+      }
+      if (infoBox.children.length) card.appendChild(infoBox);
+    }
+
+    // Tipp-Pad wenn an der Reihe und freigegeben
+    if (s.subPhase === 'predict' && s.viewerPredictEnabled &&
+        s.turnOrder && s.turnOrder[s.predictTurn] === pi && prediction === null) {
+      const padWrap = el('div', { class: 'viewer-pad-wrap' });
+      padWrap.appendChild(el('div', { class: 'viewer-pad-label' }, 'DU BIST DRAN – wähle deinen Tipp:'));
+      const pad = el('div', { class: 'viewer-pad' });
+      for (let v = 0; v <= (s.cardsThisRound || 10); v++) {
+        const forbidden2 = s.rulePlusMinus1 && s.round !== 10 &&
+          s.turnOrder && s.predictTurn === s.players.length - 1
+          ? s.cardsThisRound - (s.turnOrder.slice(0, s.players.length - 1).reduce((a, idx) => a + ((s.predictions || [])[idx] || 0), 0))
+          : null;
+        const isBlocked = forbidden2 !== null && v === forbidden2;
+        const btn = el('button', {
+          class: 'viewer-pad-btn' + (isBlocked ? ' blocked' : ''),
+          disabled: isBlocked,
+          onclick: () => { if (mpRoomRef) mpRoomRef.child('viewerInput/' + pi).set(v); }
+        }, String(v));
+        pad.appendChild(btn);
+      }
+      padWrap.appendChild(pad);
+      card.appendChild(padWrap);
+    }
   } else {
-    if (prediction !== null) addInfo('TIPP', String(prediction), false);
+    // results / summary / gameEnd: vollständig
+    addCell('TIPP', prediction !== null ? String(prediction) : '—', '');
     if (tricks !== null) {
       const match = prediction !== null && tricks === prediction;
-      const tc = el('div', { class: 'viewer-info-cell' + (match ? ' viewer-match' : ' viewer-miss') });
-      tc.appendChild(el('div', { class: 'vic-label' }, 'STICHE'));
-      tc.appendChild(el('div', { class: 'vic-value' }, String(tricks)));
-      infoGrid.appendChild(tc);
+      addCell('STICHE', String(tricks), match ? 'viewer-match' : 'viewer-miss');
     }
-    if (p5 > 0 || m5 > 0) addInfo('±5', (p5 > 0 ? `+${p5*5}` : '') + (m5 > 0 ? ` −${m5*5}` : ''), false);
-    if (errs > 0) addInfo('FEHLER', `−${errs*20}`, false);
-    // Live round score
+    if (p5 > 0 || m5 > 0) addCell('±5', (p5 > 0 ? `+${p5*5}` : '') + (m5 > 0 ? ` −${m5*5}` : ''), '');
+    if (errs > 0) addCell('FEHLER', `−${errs*20}`, '');
     if (tricks !== null && prediction !== null) {
-      let rs = tricks + p5*5 - m5*5 - errs*20 + (prediction === tricks ? 10 : -5);
-      addInfo('DIESE RUNDE', (rs >= 0 ? '+' : '') + rs, true);
+      const rs = tricks + p5*5 - m5*5 - errs*20 + (prediction === tricks ? 10 : -5);
+      addCell('RUNDE', (rs >= 0 ? '+' : '') + rs, rs >= 0 ? 'viewer-match' : 'viewer-miss');
     }
+    addCell('GESAMT', String(total), '');
+    card.appendChild(infoGrid);
   }
-  addInfo('GESAMT', String(total), false);
-  card.appendChild(infoGrid);
+
+  // Graph-Button
+  if (inResults && s.history && s.history.length > 0) {
+    const graphBtn = el('button', {
+      class: 'viewer-graph-btn',
+      onclick: () => { mpViewerShowGraph = !mpViewerShowGraph; renderViewer(); }
+    }, mpViewerShowGraph ? '📊 Graph ausblenden' : '📊 Graph einblenden');
+    card.appendChild(graphBtn);
+    if (mpViewerShowGraph) card.appendChild(buildViewerChart(s));
+  }
+
   app.appendChild(card);
 
   // Phase indicator
@@ -581,6 +717,9 @@ function renderViewer() {
     lb.appendChild(row);
   });
   app.appendChild(lb);
+  // Immer sichtbarer Verlassen-Link ganz unten
+  const exitBtn = el('button', { class: 'btn-secondary', style: 'margin: 4px 16px 28px; display:block; width:calc(100% - 32px);', onclick: leaveRoom }, '← Verlassen');
+  app.appendChild(exitBtn);
 }
 
 "use strict";
@@ -600,6 +739,7 @@ function defaultState() {
     compact: true,
     showRoundGraph: false,
     soundEnabled: true,
+    viewerPredictEnabled: false,
     round: 1,
     subPhase: 'predict',
     predictions: [],
@@ -634,6 +774,7 @@ function loadState() {
         if (typeof p.compact !== 'boolean') p.compact = true;
         if (typeof p.showRoundGraph !== 'boolean') p.showRoundGraph = false;
         if (typeof p.soundEnabled !== 'boolean') p.soundEnabled = true;
+        if (typeof p.viewerPredictEnabled !== 'boolean') p.viewerPredictEnabled = false;
         for (const log of p.history) {
           if (!Array.isArray(log.errors)) log.errors = new Array(n).fill(0);
         }
@@ -1179,7 +1320,14 @@ function renderPredict() {
   const maxCards = cards(state.round);
 
   const listSec = el('div', { class: 'section' });
-  listSec.appendChild(el('h2', {}, 'TIPPS'));
+  const h2Row = el('div', { style: 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;' });
+  h2Row.appendChild(el('h2', { style: 'margin:0;' }, 'TIPPS'));
+  if (mpMode === 'host') {
+    const tog = el('div', { class: 'mp-inline-toggle', onclick: () => { state.viewerPredictEnabled = !state.viewerPredictEnabled; save(); render(); }, title: 'Mitspieler tippen selbst' });
+    tog.innerHTML = `<span>${state.viewerPredictEnabled ? '👆 An' : '👆 Aus'}</span><div class="switch${state.viewerPredictEnabled ? ' on' : ''}" style="pointer-events:none;"></div>`;
+    h2Row.appendChild(tog);
+  }
+  listSec.appendChild(h2Row);
   for (let i = 0; i < nPlayers(); i++) {
     const isCurrent = i === currentPlayerIdx;
     const row = el('div', { class: 'player-row' + (isCurrent ? ' current' : '') });
@@ -1573,6 +1721,15 @@ function renderSidebar() {
   soundRow.appendChild(sl);
   soundRow.appendChild(el('div', { class: 'switch' + (state.soundEnabled ? ' on' : ''), onclick: () => { state.soundEnabled = !state.soundEnabled; if (state.soundEnabled) { speak('Sprachausgabe an'); } else { try { window.speechSynthesis.cancel(); } catch (e) {} } save(); render(); } }));
   sb.appendChild(soundRow);
+  if (mpMode === 'host') {
+    const vpRow = el('div', { class: 'view-toggle', style: 'margin-top:12px;' });
+    const vpl = el('div', { class: 'vt-label' });
+    vpl.appendChild(el('div', { class: 'vt-t' }, 'Mitspieler tippen selbst'));
+    vpl.appendChild(el('div', { class: 'vt-s' }, state.viewerPredictEnabled ? 'An' : 'Aus'));
+    vpRow.appendChild(vpl);
+    vpRow.appendChild(el('div', { class: 'switch' + (state.viewerPredictEnabled ? ' on' : ''), onclick: () => { state.viewerPredictEnabled = !state.viewerPredictEnabled; save(); render(); } }));
+    sb.appendChild(vpRow);
+  }
   sb.appendChild(el('div', { class: 'sidebar-divider' }));
   sb.appendChild(el('div', { class: 'sidebar-title' }, 'STEUERUNG'));
   let items = [];
