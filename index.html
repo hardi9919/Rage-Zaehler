@@ -344,6 +344,7 @@ input { -webkit-user-select: text; user-select: text; }
 .viewer-round-info { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
 .viewer-info-line { font-size: 13px; color: var(--text-dim); }
 .viewer-forbidden { font-size: 14px; font-weight: 700; color: var(--accent); background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 8px 12px; margin-top: 4px; }
+.viewer-my-turn-badge { font-size: 15px; font-weight: 800; color: #22c55e; background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.35); border-radius: 8px; padding: 8px 12px; margin-top: 2px; }
 .viewer-pad-wrap { margin-top: 16px; }
 .viewer-pad-label { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; color: var(--text-dimmer); text-transform: uppercase; margin-bottom: 8px; }
 .viewer-pad { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -618,9 +619,8 @@ function renderViewer() {
   };
 
   if (!inResults) {
-    // predict / play: Tipp + Gesamt + Spielinfo
+    // predict / play: nur Tipp (kein Gesamt)
     addCell('DEIN TIPP', prediction !== null ? String(prediction) : '…', prediction !== null ? 'highlight' : '');
-    addCell('GESAMT', String(total), '');
     card.appendChild(infoGrid);
 
     // Dealer + Starter
@@ -628,11 +628,32 @@ function renderViewer() {
       const infoBox = el('div', { class: 'viewer-round-info' });
       if (s.dealerIdx != null && s.players && s.players[s.dealerIdx]) {
         const dealerName = s.players[s.dealerIdx].name || `Spieler ${s.dealerIdx + 1}`;
-        infoBox.appendChild(el('div', { class: 'viewer-info-line' }, `🃏 Gibt aus: ${dealerName}`));
+        infoBox.appendChild(el('div', { class: 'viewer-info-line' }, `Kartengeber: ${dealerName}`));
       }
       if (s.turnOrder && s.turnOrder[0] != null && s.players && s.players[s.turnOrder[0]]) {
         const starterName = s.players[s.turnOrder[0]].name || `Spieler ${s.turnOrder[0] + 1}`;
-        infoBox.appendChild(el('div', { class: 'viewer-info-line' }, `▶ Beginnt: ${starterName}`));
+        infoBox.appendChild(el('div', { class: 'viewer-info-line' }, `Runde beginnt bei: ${starterName}`));
+      }
+      // Wer ist aktuell am Tippen + eigene Position
+      if (s.subPhase === 'predict' && s.turnOrder && s.predictTurn < s.players.length) {
+        const curTipperIdx = s.turnOrder[s.predictTurn];
+        const isMyTurn = curTipperIdx === pi;
+        const curName = (s.players[curTipperIdx] && s.players[curTipperIdx].name) || `Spieler ${curTipperIdx + 1}`;
+        if (isMyTurn) {
+          infoBox.appendChild(el('div', { class: 'viewer-my-turn-badge' }, '👉 Du bist jetzt dran!'));
+        } else {
+          infoBox.appendChild(el('div', { class: 'viewer-info-line' }, `Tippt gerade: ${curName}`));
+        }
+        // Eigene Position in der Tipp-Reihenfolge
+        const myPos = s.turnOrder.indexOf(pi);
+        if (myPos !== -1) {
+          const n = s.players.length;
+          const ordinals = ['Erster', 'Zweiter', 'Dritter', 'Vierter', 'Fünfter', 'Sechster', 'Siebter', 'Achter'];
+          const posText = myPos === n - 1 ? 'Letzter' : (ordinals[myPos] || `${myPos + 1}.`);
+          const alreadyTipped = myPos < s.predictTurn;
+          infoBox.appendChild(el('div', { class: 'viewer-info-line' },
+            alreadyTipped ? `Du hast bereits getippt (${posText} von ${n})` : `Du tippst als ${posText} von ${n}`));
+        }
       }
       // Verbotene Zahl für letzten Spieler
       if (s.subPhase === 'predict' && s.rulePlusMinus1 && s.round !== 10 &&
@@ -1302,7 +1323,7 @@ function renderRoundBanner() {
   r2.appendChild(el('span', { class: 'r dealer-name' }, pName(dealerIdx)));
   info.appendChild(r2);
   const r3 = el('div', { class: 'row' });
-  r3.appendChild(el('span', { class: 'l' }, state.subPhase === 'results' ? 'Runde beginnt bei:' : 'Tipps beginnen bei:'));
+  r3.appendChild(el('span', { class: 'l' }, state.subPhase === 'results' || state.predictTurn >= nPlayers() ? 'Runde beginnt bei:' : 'Tipps beginnen bei:'));
   r3.appendChild(el('span', { class: 'r' }, pName(startIdx)));
   info.appendChild(r3);
   if (isLastRound()) info.appendChild(el('div', { class: 'last-tag' }, 'LETZTE RUNDE · STICHE DÜRFEN AUFGEHEN'));
