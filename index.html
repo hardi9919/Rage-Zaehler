@@ -507,6 +507,7 @@ function leaveRoom() {
   sessionStorage.removeItem('mpViewer');
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   mpViewerPlayerId = null; mpViewerState = null; mpConnected = false;
+  state = defaultState();
   render();
 }
 
