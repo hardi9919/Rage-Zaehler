@@ -851,7 +851,9 @@ function loadState() {
 }
 function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {} }
 function reset() { if (popupTimer) clearTimeout(popupTimer); const p = document.getElementById('ad-popup'); if (p) p.remove(); state = defaultState(); save(); render(); }
-state = loadState();
+const _isResume = sessionStorage.getItem('rage_session') === '1';
+sessionStorage.setItem('rage_session', '1');
+state = _isResume ? loadState() : defaultState();
 
 const cards = r => ROUNDS[r - 1];
 const nPlayers = () => state.players.length;
