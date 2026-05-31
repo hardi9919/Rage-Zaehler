@@ -317,6 +317,7 @@ input { -webkit-user-select: text; user-select: text; }
 .viewer-player-grid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; width: 100%; }
 .viewer-player-btn { background: var(--surface-2); border: 2px solid var(--border); border-radius: 12px; color: var(--text); font-size: 16px; font-weight: 700; padding: 14px 20px; cursor: pointer; min-width: 100px; transition: border-color 0.15s; }
 .viewer-player-btn:hover { border-color: var(--accent); color: var(--accent); }
+.viewer-player-btn.taken { opacity: 0.35; cursor: not-allowed; border-color: var(--border); color: var(--text-dimmer); }
 .viewer-header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
 .viewer-room-dot { font-size: 11px; color: #22c55e; }
 .viewer-room-code { font-family: "Bungee",monospace; font-size: 14px; color: var(--text-dim); letter-spacing: 2px; flex: 1; }
@@ -409,6 +410,13 @@ let mpRoomCode = null;
 let mpRoomRef = null;
 let mpViewerPlayerId = null;
 let mpViewerShowGraph = false;
+let mpViewerSelections = {};
+let mpSelRef = null;
+let mpViewerSessionId = sessionStorage.getItem('rage_vsid') || (() => {
+  const id = Math.random().toString(36).slice(2, 10);
+  sessionStorage.setItem('rage_vsid', id);
+  return id;
+})();
 let mpViewerState = null;
 let mpConnected = false;
 
@@ -459,6 +467,7 @@ function startHost() {
 
 function stopHost() {
   if (mpRoomRef) mpRoomRef.remove().catch(() => {});
+  try { fbDb.ref('rooms/' + mpRoomCode + '_sel').remove(); } catch (e) {}
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   save(); render();
 }
@@ -493,6 +502,9 @@ function joinRoom(code) {
     mpRoomRef = ref;
     mpConnected = true;
     sessionStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode }));
+    // Separate Selections-Ref (wird nicht vom Host überschrieben)
+    mpSelRef = fbDb.ref('rooms/' + mpRoomCode + '_sel');
+    mpSelRef.on('value', snap => { mpViewerSelections = snap.val() || {}; renderViewer(); });
     ref.on('value', s => {
       mpViewerState = s.val();
       mpConnected = !!mpViewerState;
@@ -504,9 +516,15 @@ function joinRoom(code) {
 
 function leaveRoom() {
   if (mpRoomRef && mpMode === 'viewer') { mpRoomRef.off(); mpRoomRef.root.child('.info/connected').off(); }
+  if (mpSelRef) {
+    if (mpViewerPlayerId != null) mpSelRef.child(String(mpViewerPlayerId)).remove().catch(() => {});
+    mpSelRef.off();
+    mpSelRef = null;
+  }
   sessionStorage.removeItem('mpViewer');
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   mpViewerPlayerId = null; mpViewerState = null; mpConnected = false;
+  mpViewerSelections = {};
   state = defaultState();
   render();
 }
@@ -565,14 +583,23 @@ function renderViewer() {
     } else {
       const grid = el('div', { class: 'viewer-player-grid' });
       s.players.forEach((p, i) => {
-        grid.appendChild(el('button', {
-          class: 'viewer-player-btn',
+        const takenBy = mpViewerSelections[String(i)];
+        const isMine = takenBy === mpViewerSessionId;
+        const isTaken = takenBy && !isMine;
+        const btn = el('button', {
+          class: 'viewer-player-btn' + (isTaken ? ' taken' : ''),
+          disabled: isTaken,
           onclick: () => {
+            // Alte Auswahl freigeben
+            if (mpViewerPlayerId != null && mpSelRef)
+              mpSelRef.child(String(mpViewerPlayerId)).remove().catch(() => {});
             mpViewerPlayerId = i;
+            if (mpSelRef) mpSelRef.child(String(i)).set(mpViewerSessionId);
             try { sessionStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode, playerId: i })); } catch (e) {}
             renderViewer();
           }
-        }, p.name || `Spieler ${i + 1}`));
+        }, (p.name || `Spieler ${i + 1}`) + (isTaken ? ' ✓' : ''));
+        grid.appendChild(btn);
       });
       wrap.appendChild(grid);
     }
