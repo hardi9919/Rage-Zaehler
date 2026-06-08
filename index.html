@@ -1289,10 +1289,38 @@ function loadState() {
   return defaultState();
 }
 function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {} }
-function reset() { if (popupTimer) clearTimeout(popupTimer); const p = document.getElementById('ad-popup'); if (p) p.remove(); isCurrentWinnerScreen = false; stopVictoryMelody(); state = defaultState(); save(); render(); }
+function reset() {
+  if (popupTimer) clearTimeout(popupTimer);
+  const p = document.getElementById('ad-popup'); if (p) p.remove();
+  isCurrentWinnerScreen = false;
+  stopVictoryMelody();
+  const prevTheme = state.theme, prevSound = state.soundEnabled, prevCompact = state.compact,
+        prevGraph = state.showRoundGraph, prevVP = state.viewerPredictEnabled;
+  state = defaultState();
+  state.theme = prevTheme; state.soundEnabled = prevSound; state.compact = prevCompact;
+  state.showRoundGraph = prevGraph; state.viewerPredictEnabled = prevVP;
+  save(); applyTheme(); render();
+}
 const _isResume = sessionStorage.getItem('rage_session') === '1';
 sessionStorage.setItem('rage_session', '1');
 state = _isResume ? loadState() : defaultState();
+// Persönliche Einstellungen (Theme, Sound, Ansicht …) sollen über Neuladen/Reset
+// hinweg erhalten bleiben, auch wenn die laufende Spielsitzung nicht fortgesetzt wird.
+if (!_isResume) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const prev = JSON.parse(raw);
+      if (prev) {
+        if (prev.theme === 'light' || prev.theme === 'dark') state.theme = prev.theme;
+        if (typeof prev.soundEnabled === 'boolean') state.soundEnabled = prev.soundEnabled;
+        if (typeof prev.compact === 'boolean') state.compact = prev.compact;
+        if (typeof prev.showRoundGraph === 'boolean') state.showRoundGraph = prev.showRoundGraph;
+        if (typeof prev.viewerPredictEnabled === 'boolean') state.viewerPredictEnabled = prev.viewerPredictEnabled;
+      }
+    }
+  } catch (e) {}
+}
 
 const cards = r => ROUNDS[r - 1];
 const nPlayers = () => state.players.length;
