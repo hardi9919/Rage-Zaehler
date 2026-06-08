@@ -447,6 +447,8 @@ let mpViewerPlayerId = null;
 let mpViewerShowGraph = false;
 let mpViewerSelections = {};
 let mpSelRef = null;
+let mpHostSelections = {};
+let mpHostSelRef = null;
 let mpViewerSessionId = sessionStorage.getItem('rage_vsid') || (() => {
   const id = Math.random().toString(36).slice(2, 10);
   sessionStorage.setItem('rage_vsid', id);
@@ -481,6 +483,9 @@ function startHost() {
   mpRoomCode = generateRoomCode();
   mpRoomRef = fbDb.ref('rooms/' + mpRoomCode);
   pushToFirebase();
+  // Auswahl der Mitspieler beobachten, damit der Host sieht, wer schon einen Spieler gewählt hat
+  mpHostSelRef = fbDb.ref('rooms/' + mpRoomCode + '_sel');
+  mpHostSelRef.on('value', snap => { mpHostSelections = snap.val() || {}; render(); });
   // Viewer-Tipps empfangen
   mpRoomRef.child('viewerInput').on('value', snap => {
     const inputs = snap.val();
@@ -503,6 +508,8 @@ function startHost() {
 function stopHost() {
   if (mpRoomRef) mpRoomRef.remove().catch(() => {});
   try { fbDb.ref('rooms/' + mpRoomCode + '_sel').remove(); } catch (e) {}
+  if (mpHostSelRef) { mpHostSelRef.off(); mpHostSelRef = null; }
+  mpHostSelections = {};
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   save(); render();
 }
@@ -1811,7 +1818,14 @@ function renderSetup() {
     codeWrap.appendChild(el('div', { class: 'mp-code-hint' }, 'Andere öffnen dieselbe URL und tippen diesen Code ein'));
     mpSec.appendChild(codeWrap);
     const whoWrap = el('div', { style: 'margin-top:14px;' });
-    whoWrap.appendChild(el('div', { class: 'mp-code-label', style: 'margin-bottom:6px;' }, 'WER BIST DU?'));
+    const whoHdr = el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;' });
+    whoHdr.appendChild(el('div', { class: 'mp-code-label', style: 'margin-bottom:0;' }, 'WER BIST DU?'));
+    const claimedCount = Object.keys(mpHostSelections || {}).filter(k => mpHostSelections[k]).length
+      + (state.hostPlayerIdx != null && !mpHostSelections[String(state.hostPlayerIdx)] ? 1 : 0);
+    whoHdr.appendChild(el('div', {
+      class: 'badge', style: 'font-size:11px;letter-spacing:0.5px;white-space:nowrap;'
+    }, `👥 ${claimedCount}/${nPlayers()} Spielern`));
+    whoWrap.appendChild(whoHdr);
     whoWrap.appendChild(el('p', { class: 'hint', style: 'margin:0 0 8px;' }, 'Optional – hat keinen Einfluss auf das Spiel. Andere sehen dann, dass dieser Spieler bereits der Host ist.'));
     const whoChips = el('div', { class: 'select-row' });
     whoChips.appendChild(el('button', {
