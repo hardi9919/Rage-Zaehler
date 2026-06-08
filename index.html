@@ -790,6 +790,8 @@ function renderViewer() {
   frag.appendChild(hdr);
 
   maybeAnnounceViewerPlay(s);
+  maybeAnnounceViewerForbidden(s);
+  maybeAnnounceViewerNextRound(s);
 
   if (s.phase === 'setup') {
     const sec = el('div', { class: 'section', style: 'text-align:center;padding:48px 20px;' });
@@ -1254,6 +1256,36 @@ function maybeAnnounceViewerPlay(s) {
   else if (diff < 0) speak(`${Math.abs(diff)} ${Math.abs(diff) === 1 ? 'Stich' : 'Stiche'} zu wenig. ${starter} beginnt.`);
   else speak(`${starter} beginnt.`);
 }
+let lastAnnouncedViewerForbidden = null;
+function maybeAnnounceViewerForbidden(s) {
+  if (!s || s.phase !== 'playing' || s.subPhase !== 'predict' || !s.players || s.dealerIdx == null) { lastAnnouncedViewerForbidden = null; return; }
+  const n = s.players.length;
+  if (s.predictTurn !== n - 1) { lastAnnouncedViewerForbidden = null; return; }
+  if (!s.rulePlusMinus1 || s.round === 10) return;
+  const target = cards(s.round);
+  const order = [];
+  for (let i = 1; i <= n; i++) order.push((s.dealerIdx + i) % n);
+  let sum = 0;
+  for (let i = 0; i < n - 1; i++) sum += (s.predictions || [])[order[i]] || 0;
+  const forbidden = target - sum;
+  if (forbidden < 0 || forbidden > target) { lastAnnouncedViewerForbidden = null; return; }
+  const key = `r${s.round}-f${forbidden}`;
+  if (key === lastAnnouncedViewerForbidden) return;
+  lastAnnouncedViewerForbidden = key;
+  speak(`${forbidden}, ... nicht`);
+}
+let lastAnnouncedViewerNextRound = null;
+function maybeAnnounceViewerNextRound(s) {
+  if (!s || s.phase !== 'playing' || s.subPhase !== 'summary' || !s.players || s.dealerIdx == null || s.round >= 10) { lastAnnouncedViewerNextRound = null; return; }
+  const key = `r${s.round}`;
+  if (key === lastAnnouncedViewerNextRound) return;
+  lastAnnouncedViewerNextRound = key;
+  const n = s.players.length;
+  const nextDealerIdx = (s.dealerIdx + 1) % n;
+  const nextDealerName = (s.players[nextDealerIdx] && s.players[nextDealerIdx].name) || `Spieler ${nextDealerIdx + 1}`;
+  const nextCards = cards(s.round + 1);
+  speak(`${nextCards} ${nextCards === 1 ? 'Karte' : 'Karten'}, Geber ${nextDealerName}`);
+}
 let cachedDeVoice = null;
 function refreshDeVoice() {
   if (!('speechSynthesis' in window)) return;
@@ -1313,6 +1345,18 @@ function maybeAnnounceForbidden() {
   if (key === lastAnnouncedForbidden) return;
   lastAnnouncedForbidden = key;
   speak(`${forbidden}, ... nicht`);
+}
+let lastAnnouncedNextRound = null;
+function maybeAnnounceNextRound() {
+  if (state.phase !== 'playing' || state.subPhase !== 'summary' || state.round >= 10) { lastAnnouncedNextRound = null; return; }
+  const key = `r${state.round}`;
+  if (key === lastAnnouncedNextRound) return;
+  lastAnnouncedNextRound = key;
+  const n = nPlayers();
+  const nextDealerIdx = (getDealerIdx(state.round) + 1) % n;
+  const nextDealerName = pName(nextDealerIdx);
+  const nextCards = cards(state.round + 1);
+  speak(`${nextCards} ${nextCards === 1 ? 'Karte' : 'Karten'}, Geber ${nextDealerName}`);
 }
 function submitPrediction(value) {
   const order = getTurnOrder(state.round);
@@ -2215,6 +2259,7 @@ function render() {
   }
   maybeAnnounceForbidden();
   maybeAnnouncePlay();
+  maybeAnnounceNextRound();
   pushToFirebase();
   const app = document.getElementById('app');
   app.className = 'app' + (state.compact ? ' compact' : '');
