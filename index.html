@@ -584,12 +584,22 @@ function buildViewerChart(s, pi) {
   return wrap;
 }
 
+function finishViewerRender(app, frag) {
+  app.className = 'app';
+  app.innerHTML = '';
+  app.appendChild(frag);
+}
+
 function renderViewer() {
   const app = document.getElementById('app');
   if (!app) return;
-  app.className = 'app';
-  app.innerHTML = '';
   const s = mpViewerState;
+  // Bildschirm komplett im Hintergrund (DocumentFragment) aufbauen und erst am
+  // Ende atomar einsetzen. So bleibt bei einem Render-Fehler (z.B. durch einen
+  // kurzzeitig inkonsistenten Firebase-Snapshot) der zuletzt funktionierende
+  // Bildschirm sichtbar, statt dass nur ein Teil (z.B. nur der Header) übrig bleibt.
+  const frag = document.createDocumentFragment();
+  try {
 
   // Player selection screen
   if (mpViewerPlayerId === null) {
@@ -623,7 +633,8 @@ function renderViewer() {
       wrap.appendChild(grid);
     }
     wrap.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:24px;', onclick: leaveRoom }, '← Verlassen'));
-    app.appendChild(wrap);
+    frag.appendChild(wrap);
+    finishViewerRender(app, frag);
     return;
   }
 
@@ -633,7 +644,8 @@ function renderViewer() {
     wrap.appendChild(el('div', { class: 'viewer-code-badge' }, mpRoomCode || '—'));
     wrap.appendChild(el('p', { style: 'color:var(--text-dim);margin:16px 0 8px;' }, 'Der Raum wurde beendet oder die Verbindung unterbrochen.'));
     wrap.appendChild(el('button', { class: 'btn-primary', style: 'margin-top:12px;', onclick: leaveRoom }, '← Zur Startseite'));
-    app.appendChild(wrap);
+    frag.appendChild(wrap);
+    finishViewerRender(app, frag);
     return;
   }
 
@@ -646,14 +658,15 @@ function renderViewer() {
   hdr.appendChild(el('div', { class: 'viewer-room-dot', title: mpConnected ? 'Live' : 'Verbindung…' }, mpConnected ? '●' : '○'));
   hdr.appendChild(el('div', { class: 'viewer-room-code' }, mpRoomCode));
   hdr.appendChild(el('button', { class: 'viewer-leave', onclick: leaveRoom }, '✕'));
-  app.appendChild(hdr);
+  frag.appendChild(hdr);
 
   if (s.phase === 'setup') {
     const sec = el('div', { class: 'section', style: 'text-align:center;padding:48px 20px;' });
     sec.appendChild(el('div', { class: 'viewer-name-big' }, name));
     sec.appendChild(el('p', { class: 'hint', style: 'margin-top:12px;' }, 'Der Host startet das Spiel…'));
     sec.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:20px;', onclick: leaveRoom }, '← Verlassen'));
-    app.appendChild(sec);
+    frag.appendChild(sec);
+    finishViewerRender(app, frag);
     return;
   }
 
@@ -661,7 +674,7 @@ function renderViewer() {
   const rb = el('div', { class: 'viewer-round-bar' });
   rb.appendChild(el('span', {}, `RUNDE ${s.round}`));
   rb.appendChild(el('span', { class: 'viewer-cards' }, `${10 - s.round + 1} Karten`));
-  app.appendChild(rb);
+  frag.appendChild(rb);
 
   // Player card
   const card = el('div', { class: 'viewer-card' });
@@ -809,12 +822,12 @@ function renderViewer() {
     if (mpViewerShowGraph) card.appendChild(buildViewerChart(s, pi));
   }
 
-  app.appendChild(card);
+  frag.appendChild(card);
 
   // Phase indicator
   const phases = { predict: '✏️ Tipps werden eingegeben', play: '🃏 Karten spielen!', results: '📝 Ergebnis wird eingetragen', summary: '✅ Runde abgeschlossen', gameEnd: '🏆 Spiel beendet' };
   const ph = el('div', { class: 'viewer-phase' }, phases[s.subPhase] || phases[s.phase] || '');
-  app.appendChild(ph);
+  frag.appendChild(ph);
 
   // Leaderboard
   const lb = el('div', { class: 'viewer-lb' });
@@ -828,10 +841,16 @@ function renderViewer() {
     row.appendChild(el('span', { class: 'viewer-lb-pts' }, String(p.total)));
     lb.appendChild(row);
   });
-  app.appendChild(lb);
+  frag.appendChild(lb);
   // Immer sichtbarer Verlassen-Link ganz unten
   const exitBtn = el('button', { class: 'btn-secondary', style: 'margin: 4px 16px 28px; display:block; width:calc(100% - 32px);', onclick: leaveRoom }, '← Verlassen');
-  app.appendChild(exitBtn);
+  frag.appendChild(exitBtn);
+
+  finishViewerRender(app, frag);
+  } catch (err) {
+    // Bildschirm bleibt unverändert (kein Blackout) – nächstes Update versucht es erneut
+    console.error('renderViewer Fehler – Anzeige bleibt auf letztem gültigen Stand:', err);
+  }
 }
 
 "use strict";
