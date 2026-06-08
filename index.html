@@ -297,6 +297,14 @@ input { -webkit-user-select: text; user-select: text; }
 .winner-banner .crown { font-size: 36px; margin-bottom: 6px; }
 .winner-banner .name { font-family: 'Bungee', sans-serif; font-size: 28px; color: var(--accent); letter-spacing: 2px; }
 .winner-banner .pts { font-size: 13px; color: var(--text-dim); margin-top: 4px; letter-spacing: 1px; }
+.winner-banner.me { animation: winnerGlow 1.6s ease-in-out infinite alternate; }
+@keyframes winnerGlow {
+  from { box-shadow: 0 0 18px 0 rgba(239,68,68,0.35); }
+  to   { box-shadow: 0 0 38px 8px rgba(239,68,68,0.65); }
+}
+.viewer-you-won { margin-top: 10px; font-family: 'Bungee', sans-serif; font-size: 16px; color: #fff; background: var(--accent); border-radius: 8px; padding: 8px 14px; letter-spacing: 1px; animation: winnerPulse 1s ease-in-out infinite alternate; }
+@keyframes winnerPulse { from { transform: scale(1); } to { transform: scale(1.045); } }
+.summary-table tr.me-row td { background: rgba(239,68,68,0.1); font-weight: 700; }
 
 .kbd-hint { font-size: 11px; color: var(--text-dimmer); text-align: center; margin-top: 10px; line-height: 1.5; }
 .kbd-hint kbd { background: var(--surface-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-family: monospace; font-size: 10px; color: var(--text-dim); }
@@ -540,6 +548,7 @@ function joinRoom(code) {
 }
 
 function leaveRoom() {
+  stopFireworks();
   if (popupTimer) clearTimeout(popupTimer);
   const adPopup = document.getElementById('ad-popup');
   if (adPopup) adPopup.remove();
@@ -613,6 +622,78 @@ function finishViewerRender(app, frag) {
   app.appendChild(frag);
 }
 
+// ─── FEUERWERK FÜR DEN SIEGER (Viewer-Endbildschirm) ────────────────────────
+let fireworksStop = null;
+function startFireworks() {
+  if (fireworksStop) return; // läuft bereits
+  const canvas = document.createElement('canvas');
+  canvas.id = 'viewer-fireworks';
+  canvas.style.cssText = 'position:fixed;inset:0;z-index:6000;pointer-events:none;width:100vw;height:100vh;';
+  document.body.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+  let w, h;
+  function resize() { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; }
+  resize();
+  window.addEventListener('resize', resize);
+  const colors = ['#ef4444', '#f59e0b', '#fde047', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#14b8a6', '#ffffff'];
+  let particles = [];
+  let rockets = [];
+  let lastSpawn = 0;
+  let running = true;
+
+  function spawnRocket() {
+    rockets.push({
+      x: w * (0.15 + Math.random() * 0.7),
+      y: h,
+      vy: -(Math.random() * 3 + 7.5),
+      vx: (Math.random() - 0.5) * 1.5,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      targetY: h * (0.18 + Math.random() * 0.32),
+    });
+  }
+  function explode(x, y, color) {
+    const count = 50 + Math.floor(Math.random() * 35);
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.25;
+      const speed = Math.random() * 3.6 + 1.6;
+      particles.push({
+        x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        color, life: 1, decay: 0.01 + Math.random() * 0.014,
+      });
+    }
+  }
+  function tick(ts) {
+    if (!running) return;
+    ctx.clearRect(0, 0, w, h);
+    if (ts - lastSpawn > 480) { spawnRocket(); lastSpawn = ts; }
+    rockets.forEach(r => {
+      r.x += r.vx; r.y += r.vy; r.vy += 0.045;
+      ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(r.x, r.y, 2.6, 0, Math.PI * 2); ctx.fillStyle = r.color; ctx.fill();
+      if (r.vy >= -0.6 || r.y <= r.targetY) { explode(r.x, r.y, r.color); r.dead = true; }
+    });
+    rockets = rockets.filter(r => !r.dead);
+    particles.forEach(p => {
+      p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.life -= p.decay;
+      ctx.globalAlpha = Math.max(p.life, 0);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2); ctx.fillStyle = p.color; ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    particles = particles.filter(p => p.life > 0);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+  fireworksStop = () => {
+    running = false;
+    window.removeEventListener('resize', resize);
+    canvas.remove();
+    fireworksStop = null;
+  };
+}
+function stopFireworks() {
+  if (fireworksStop) fireworksStop();
+}
+
 let viewerRetryTimer = null;
 function renderViewer() {
   const app = document.getElementById('app');
@@ -660,6 +741,7 @@ function renderViewer() {
     }
     wrap.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:24px;', onclick: leaveRoom }, '← Verlassen'));
     frag.appendChild(wrap);
+    stopFireworks();
     finishViewerRender(app, frag);
     return;
   }
@@ -671,6 +753,7 @@ function renderViewer() {
     wrap.appendChild(el('p', { style: 'color:var(--text-dim);margin:16px 0 8px;' }, 'Der Raum wurde beendet oder die Verbindung unterbrochen.'));
     wrap.appendChild(el('button', { class: 'btn-primary', style: 'margin-top:12px;', onclick: leaveRoom }, '← Zur Startseite'));
     frag.appendChild(wrap);
+    stopFireworks();
     finishViewerRender(app, frag);
     return;
   }
@@ -692,9 +775,59 @@ function renderViewer() {
     sec.appendChild(el('p', { class: 'hint', style: 'margin-top:12px;' }, 'Der Host startet das Spiel…'));
     sec.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:20px;', onclick: leaveRoom }, '← Verlassen'));
     frag.appendChild(sec);
+    stopFireworks();
     finishViewerRender(app, frag);
     return;
   }
+
+  // Spielende: eigener Sieger-/Endstand-Bildschirm
+  if (s.phase === 'gameEnd') {
+    const standings = (s.players || []).map((p, i) => ({
+      name: p.name || `Spieler ${i + 1}`, total: (s.totals || [])[i] || 0, idx: i,
+    }));
+    standings.sort((a, b) => b.total - a.total);
+    const winner = standings[0] || null;
+    const amWinner = !!winner && winner.idx === pi;
+
+    if (amWinner) startFireworks(); else stopFireworks();
+
+    const banner = el('div', { class: 'winner-banner' + (amWinner ? ' me' : '') });
+    banner.appendChild(el('div', { class: 'crown' }, '👑'));
+    banner.appendChild(el('div', { class: 'name' }, winner ? winner.name : '—'));
+    banner.appendChild(el('div', { class: 'pts' }, `${winner ? winner.total : 0} PUNKTE`));
+    if (amWinner) banner.appendChild(el('div', { class: 'viewer-you-won' }, '🎉 DU HAST GEWONNEN! 🎉'));
+    frag.appendChild(banner);
+
+    const sec = el('div', { class: 'section' });
+    sec.appendChild(el('h2', {}, 'ENDSTAND'));
+    const tbl = el('table', { class: 'summary-table' });
+    const hr = el('tr');
+    ['Platz', 'Spieler', 'Punkte'].forEach((t, i) => hr.appendChild(el('th', { class: i < 2 ? 'l' : '' }, t)));
+    tbl.appendChild(hr);
+    standings.forEach((p, i) => {
+      const tr = el('tr', { class: p.idx === pi ? 'me-row' : '' });
+      tr.appendChild(el('td', { class: 'name' }, `${i + 1}.`));
+      tr.appendChild(el('td', { class: 'name' }, p.name + (p.idx === pi ? ' (du)' : '')));
+      tr.appendChild(el('td', { class: 'score' }, String(p.total)));
+      tbl.appendChild(tr);
+    });
+    sec.appendChild(tbl);
+    frag.appendChild(sec);
+
+    if (s.history && s.history.length > 0) {
+      const graphBtn = el('button', {
+        class: 'viewer-graph-btn',
+        onclick: () => { mpViewerShowGraph = !mpViewerShowGraph; renderViewer(); }
+      }, mpViewerShowGraph ? '📊 Graph ausblenden' : '📊 Graph einblenden');
+      frag.appendChild(graphBtn);
+      if (mpViewerShowGraph) frag.appendChild(buildViewerChart(s, pi));
+    }
+
+    frag.appendChild(el('button', { class: 'btn-secondary', style: 'margin: 20px 0 8px;', onclick: leaveRoom }, '← Verlassen'));
+    finishViewerRender(app, frag);
+    return;
+  }
+  stopFireworks();
 
   // Round info
   const rb = el('div', { class: 'viewer-round-bar' });
