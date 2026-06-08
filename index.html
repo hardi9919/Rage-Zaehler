@@ -37,6 +37,26 @@
   --good: #22c55e;
   --bad: #ef4444;
 }
+html.light {
+  --bg: #f7f5f4;
+  --surface: #ffffff;
+  --surface-2: #f0eeed;
+  --surface-3: #e6e3e1;
+  --border: #e0dcda;
+  --border-strong: #c9c4c1;
+  --text: #1a1817;
+  --text-dim: #7a7472;
+  --text-dimmer: #a39d9a;
+  --accent: #dc2626;
+  --accent-dark: #b91c1c;
+  --good: #16a34a;
+  --bad: #dc2626;
+}
+html.light, html.light body { background: var(--bg); }
+html.light body::before, html.light body::after { background: var(--bg); }
+html.light body {
+  background: radial-gradient(ellipse 80% 50% at 50% -10%, #fde8e8 0%, transparent 50%), var(--bg);
+}
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html { overscroll-behavior: none; overflow-x: hidden; background: #0a0a0a; }
 body { overscroll-behavior: none; background-color: #0a0a0a; }
@@ -595,6 +615,7 @@ let viewerRetryTimer = null;
 function renderViewer() {
   const app = document.getElementById('app');
   if (!app) return;
+  applyTheme();
   if (viewerRetryTimer) { clearTimeout(viewerRetryTimer); viewerRetryTimer = null; }
   const s = mpViewerState;
   // Bildschirm komplett im Hintergrund (DocumentFragment) aufbauen und erst am
@@ -882,6 +903,7 @@ function defaultState() {
     players: [{ name: '' }, { name: '' }, { name: '' }, { name: '' }],
     startDealerIdx: 3,
     rulePlusMinus1: true,
+    theme: 'dark',
     compact: true,
     showRoundGraph: false,
     soundEnabled: true,
@@ -917,6 +939,7 @@ function loadState() {
         if (!Array.isArray(p.predictions)) p.predictions = new Array(n).fill(null);
         if (!Array.isArray(p.totals)) p.totals = new Array(n).fill(0);
         if (!Array.isArray(p.history)) p.history = [];
+        if (p.theme !== 'light' && p.theme !== 'dark') p.theme = 'dark';
         if (typeof p.compact !== 'boolean') p.compact = true;
         if (typeof p.showRoundGraph !== 'boolean') p.showRoundGraph = false;
         if (typeof p.soundEnabled !== 'boolean') p.soundEnabled = true;
@@ -1363,6 +1386,17 @@ function renderSetup() {
   toggleRow.appendChild(lblBlock);
   toggleRow.appendChild(el('div', { class: 'switch' + (state.rulePlusMinus1 ? ' on' : ''), onclick: () => { state.rulePlusMinus1 = !state.rulePlusMinus1; save(); render(); } }));
   dealerSec.appendChild(toggleRow);
+
+  const themeRow = el('div', { class: 'toggle-row' });
+  const themeLbl = el('div', { class: 'label-block' });
+  themeLbl.appendChild(el('div', { class: 't' }, 'Helles Design'));
+  themeLbl.appendChild(el('div', { class: 's' }, state.theme === 'light' ? 'Hell' : 'Dunkel (Standard)'));
+  themeRow.appendChild(themeLbl);
+  themeRow.appendChild(el('div', {
+    class: 'switch' + (state.theme === 'light' ? ' on' : ''), tabindex: '-1',
+    onclick: () => { state.theme = state.theme === 'light' ? 'dark' : 'light'; save(); applyTheme(); render(); },
+  }));
+  dealerSec.appendChild(themeRow);
   root.appendChild(dealerSec);
 
   root.appendChild(el('button', { class: 'btn-primary', 'data-start': '', onclick: startGame, disabled: nPlayers() < MIN_PLAYERS || false }, 'SPIEL STARTEN'));
@@ -1978,7 +2012,15 @@ function showAdPopup() {
   document.body.appendChild(overlay);
 }
 
+function applyTheme() {
+  const isLight = state.theme === 'light';
+  document.documentElement.classList.toggle('light', isLight);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', isLight ? '#f7f5f4' : '#0a0a0a');
+}
+
 function render() {
+  applyTheme();
   if (mpMode === 'viewer') { renderViewer(); return; }
   const active = document.activeElement;
   const prevFocusId = active && active.dataset ? active.dataset.focusId : null;
