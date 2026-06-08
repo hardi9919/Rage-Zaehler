@@ -2058,6 +2058,23 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ─── BILDSCHIRM WACHHALTEN (Wake Lock) ──────────────────────────────────────
+// Verhindert, dass das Display während der Nutzung der App abgedunkelt/gesperrt wird.
+// Wird vom System automatisch aufgehoben, sobald die Seite in den Hintergrund geht –
+// daher bei Rückkehr in den Vordergrund erneut anfordern.
+let wakeLock = null;
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch (e) { wakeLock = null; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') requestWakeLock();
+});
+requestWakeLock();
+
 // Viewer-Session nach Reload wiederherstellen
 try {
   const saved = sessionStorage.getItem('mpViewer');
