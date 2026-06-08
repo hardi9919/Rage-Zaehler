@@ -590,9 +590,11 @@ function finishViewerRender(app, frag) {
   app.appendChild(frag);
 }
 
+let viewerRetryTimer = null;
 function renderViewer() {
   const app = document.getElementById('app');
   if (!app) return;
+  if (viewerRetryTimer) { clearTimeout(viewerRetryTimer); viewerRetryTimer = null; }
   const s = mpViewerState;
   // Bildschirm komplett im Hintergrund (DocumentFragment) aufbauen und erst am
   // Ende atomar einsetzen. So bleibt bei einem Render-Fehler (z.B. durch einen
@@ -848,8 +850,11 @@ function renderViewer() {
 
   finishViewerRender(app, frag);
   } catch (err) {
-    // Bildschirm bleibt unverändert (kein Blackout) – nächstes Update versucht es erneut
-    console.error('renderViewer Fehler – Anzeige bleibt auf letztem gültigen Stand:', err);
+    // Bildschirm bleibt unverändert (kein Blackout) – kurz danach selbst erneut versuchen,
+    // statt darauf zu warten, dass der Host zufällig die nächste Aktualisierung schickt.
+    console.error('renderViewer Fehler – Anzeige bleibt auf letztem gültigen Stand, versuche es erneut:', err);
+    if (viewerRetryTimer) clearTimeout(viewerRetryTimer);
+    viewerRetryTimer = setTimeout(() => { viewerRetryTimer = null; renderViewer(); }, 350);
   }
 }
 
