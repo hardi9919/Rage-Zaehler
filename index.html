@@ -506,8 +506,10 @@ function joinRoom(code) {
     mpSelRef = fbDb.ref('rooms/' + mpRoomCode + '_sel');
     mpSelRef.on('value', snap => { mpViewerSelections = snap.val() || {}; renderViewer(); });
     ref.on('value', s => {
+      const prevPhase = mpViewerState ? mpViewerState.phase : null;
       mpViewerState = s.val();
       mpConnected = !!mpViewerState;
+      if (mpViewerState && mpViewerState.phase === 'playing' && prevPhase !== 'playing') schedulePopup();
       renderViewer();
     });
     ref.root.child('.info/connected').on('value', s => { mpConnected = s.val(); renderViewer(); });
@@ -515,6 +517,9 @@ function joinRoom(code) {
 }
 
 function leaveRoom() {
+  if (popupTimer) clearTimeout(popupTimer);
+  const adPopup = document.getElementById('ad-popup');
+  if (adPopup) adPopup.remove();
   if (mpRoomRef && mpMode === 'viewer') { mpRoomRef.off(); mpRoomRef.root.child('.info/connected').off(); }
   if (mpSelRef) {
     if (mpViewerPlayerId != null) mpSelRef.child(String(mpViewerPlayerId)).remove().catch(() => {});
@@ -529,7 +534,7 @@ function leaveRoom() {
   render();
 }
 
-function buildViewerChart(s) {
+function buildViewerChart(s, pi) {
   const players = s.players || [];
   const history = s.history || [];
   const n = players.length;
@@ -540,7 +545,7 @@ function buildViewerChart(s) {
   const allVals = series.flat();
   const minV = Math.min(...allVals), maxV = Math.max(...allVals);
   const rangeV = maxV - minV || 1;
-  const cols = ['#ef4444','#3b82f6','#22c55e','#f59e0b','#a855f7','#ec4899','#14b8a6','#f97316'];
+  const cols = CHART_COLORS;
   const xStep = (W - padL - padR) / (series[0].length - 1);
   const yScale = v => padT + (H - padT - padB) * (1 - (v - minV) / rangeV);
   const xScale = i => padL + i * xStep;
@@ -551,9 +556,14 @@ function buildViewerChart(s) {
     svg += `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
     svg += `<text x="${padL - 4}" y="${y + 4}" text-anchor="end" fill="rgba(255,255,255,0.3)" font-size="9">${v}</text>`;
   });
-  series.forEach((pts, i) => {
+  // Eigene Linie zuletzt zeichnen, damit sie über den anderen liegt
+  const order = series.map((_, i) => i).sort((a, b) => (a === pi ? 1 : 0) - (b === pi ? 1 : 0));
+  order.forEach(i => {
+    const pts = series[i];
+    const isMe = i === pi;
     const d = pts.map((v, j) => `${j === 0 ? 'M' : 'L'}${xScale(j).toFixed(1)},${yScale(v).toFixed(1)}`).join(' ');
-    svg += `<path d="${d}" fill="none" stroke="${cols[i % cols.length]}" stroke-width="2" stroke-linejoin="round"/>`;
+    if (isMe) svg += `<path d="${d}" fill="none" stroke="#fff" stroke-width="5" stroke-linejoin="round" opacity="0.35"/>`;
+    svg += `<path d="${d}" fill="none" stroke="${cols[i % cols.length]}" stroke-width="${isMe ? 3 : 2}" stroke-linejoin="round" opacity="${isMe ? 1 : 0.6}"/>`;
   });
   history.forEach((_, ri) => {
     const x = xScale(ri + 1).toFixed(1);
@@ -562,6 +572,15 @@ function buildViewerChart(s) {
   svg += '</svg>';
   const wrap = el('div', {});
   wrap.innerHTML = svg;
+  const legend = el('div', { class: 'chart-legend' });
+  players.forEach((p, i) => {
+    const isMe = i === pi;
+    const item = el('div', { class: 'chart-legend-item' + (isMe ? ' me' : ''), style: isMe ? 'color:var(--text);font-weight:700;' : '' });
+    item.appendChild(el('span', { class: 'chart-legend-dot', style: `background:${cols[i % cols.length]};${isMe ? 'box-shadow:0 0 0 2px var(--text);' : ''}` }));
+    item.appendChild(el('span', {}, (p.name || `Spieler ${i + 1}`) + (isMe ? ' (du)' : '')));
+    legend.appendChild(item);
+  });
+  wrap.appendChild(legend);
   return wrap;
 }
 
@@ -787,7 +806,7 @@ function renderViewer() {
       onclick: () => { mpViewerShowGraph = !mpViewerShowGraph; renderViewer(); }
     }, mpViewerShowGraph ? '📊 Graph ausblenden' : '📊 Graph einblenden');
     card.appendChild(graphBtn);
-    if (mpViewerShowGraph) card.appendChild(buildViewerChart(s));
+    if (mpViewerShowGraph) card.appendChild(buildViewerChart(s, pi));
   }
 
   app.appendChild(card);
@@ -1894,7 +1913,10 @@ function schedulePopup() {
   popupShown = false;
   const delay = 25000 + Math.random() * 375000; // 25-400 Sekunden
   popupTimer = setTimeout(() => {
-    if (!popupShown && state.phase === 'playing') showAdPopup();
+    const isPlaying = mpMode === 'viewer'
+      ? !!(mpViewerState && mpViewerState.phase === 'playing')
+      : state.phase === 'playing';
+    if (!popupShown && isPlaying) showAdPopup();
   }, delay);
 }
 
