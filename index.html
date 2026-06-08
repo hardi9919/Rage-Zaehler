@@ -522,6 +522,7 @@ function pushToFirebase() {
     predictTurn: state.predictTurn || 0,
     cardsThisRound: (state.phase === 'playing') ? cards(state.round) : 0,
     viewerPredictEnabled: !!state.viewerPredictEnabled,
+    hostPlayerIdx: (typeof state.hostPlayerIdx === 'number') ? state.hostPlayerIdx : null,
     ts: Date.now()
   };
   mpRoomRef.set(payload).catch(e => console.warn('Firebase sync:', e));
@@ -553,6 +554,7 @@ function joinRoom(code) {
 
 function leaveRoom() {
   stopFireworks();
+  stopVictoryMelody();
   if (popupTimer) clearTimeout(popupTimer);
   const adPopup = document.getElementById('ad-popup');
   if (adPopup) adPopup.remove();
@@ -631,6 +633,61 @@ function finishViewerRender(app, frag) {
 }
 
 // ─── FEUERWERK FÜR DEN SIEGER (Viewer-Endbildschirm) ────────────────────────
+// Episches Sieger-Fanfaren-Loop (Web Audio API, kein externes Audio nötig)
+let victoryAudioCtx = null;
+let victoryMelodyTimer = null;
+let victoryMelodyPlaying = false;
+function stopVictoryMelody() {
+  victoryMelodyPlaying = false;
+  if (victoryMelodyTimer) { clearTimeout(victoryMelodyTimer); victoryMelodyTimer = null; }
+  if (victoryAudioCtx) { try { victoryAudioCtx.close(); } catch (e) {} victoryAudioCtx = null; }
+}
+function playVictoryMelody() {
+  if (victoryMelodyPlaying || !state || state.soundEnabled === false) return;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    victoryAudioCtx = ctx;
+    victoryMelodyPlaying = true;
+    const master = ctx.createGain();
+    master.gain.value = 0.11;
+    master.connect(ctx.destination);
+    // Triumphale Fanfare – Melodie- und Begleitstimme
+    const melody = [
+      [392.00, 0.30], [523.25, 0.30], [659.25, 0.30], [783.99, 0.62],
+      [659.25, 0.30], [783.99, 0.30], [987.77, 0.92],
+    ];
+    const chord = [261.63, 329.63, 392.00];
+    function playNote(freq, t, dur, type, peak) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(peak, t + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(g);
+      g.connect(master);
+      osc.start(t);
+      osc.stop(t + dur + 0.05);
+    }
+    function scheduleLoop() {
+      if (!victoryMelodyPlaying) return;
+      const start = ctx.currentTime + 0.06;
+      let t = start;
+      chord.forEach(f => playNote(f, t, 2.7, 'sine', 0.05));
+      melody.forEach(([freq, dur]) => {
+        playNote(freq, t, dur * 0.95, 'sawtooth', 0.10);
+        playNote(freq * 2, t, dur * 0.95, 'triangle', 0.04);
+        t += dur;
+      });
+      const totalMs = (t - start + 0.5) * 1000;
+      victoryMelodyTimer = setTimeout(scheduleLoop, totalMs);
+    }
+    scheduleLoop();
+  } catch (e) { victoryMelodyPlaying = false; }
+}
 let fireworksStop = null;
 function startFireworks() {
   if (fireworksStop) return; // läuft bereits
@@ -729,7 +786,8 @@ function renderViewer() {
       s.players.forEach((p, i) => {
         const takenBy = mpViewerSelections[String(i)];
         const isMine = takenBy === mpViewerSessionId;
-        const isTaken = takenBy && !isMine;
+        const isHost = s.hostPlayerIdx === i;
+        const isTaken = (takenBy && !isMine) || isHost;
         const btn = el('button', {
           class: 'viewer-player-btn' + (isTaken ? ' taken' : ''),
           disabled: isTaken,
@@ -742,7 +800,7 @@ function renderViewer() {
             try { sessionStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode, playerId: i })); } catch (e) {}
             renderViewer();
           }
-        }, (p.name || `Spieler ${i + 1}`) + (isTaken ? ' ✓' : ''));
+        }, (p.name || `Spieler ${i + 1}`) + (isHost ? ' (Host)' : (isTaken ? ' ✓' : '')));
         grid.appendChild(btn);
       });
       wrap.appendChild(grid);
@@ -750,6 +808,7 @@ function renderViewer() {
     wrap.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:24px;', onclick: leaveRoom }, '← Verlassen'));
     frag.appendChild(wrap);
     stopFireworks();
+    stopVictoryMelody();
     finishViewerRender(app, frag);
     return;
   }
@@ -762,6 +821,7 @@ function renderViewer() {
     wrap.appendChild(el('button', { class: 'btn-primary', style: 'margin-top:12px;', onclick: leaveRoom }, '← Zur Startseite'));
     frag.appendChild(wrap);
     stopFireworks();
+    stopVictoryMelody();
     finishViewerRender(app, frag);
     return;
   }
@@ -800,6 +860,7 @@ function renderViewer() {
     sec.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:20px;', onclick: leaveRoom }, '← Verlassen'));
     frag.appendChild(sec);
     stopFireworks();
+    stopVictoryMelody();
     finishViewerRender(app, frag);
     return;
   }
@@ -813,7 +874,7 @@ function renderViewer() {
     const winner = standings[0] || null;
     const amWinner = !!winner && winner.idx === pi;
 
-    if (amWinner) startFireworks(); else stopFireworks();
+    if (amWinner) { startFireworks(); playVictoryMelody(); } else { stopFireworks(); stopVictoryMelody(); }
 
     const banner = el('div', { class: 'winner-banner' + (amWinner ? ' me' : '') });
     banner.appendChild(el('div', { class: 'crown' }, '👑'));
@@ -852,6 +913,7 @@ function renderViewer() {
     return;
   }
   stopFireworks();
+  stopVictoryMelody();
 
   // Round info
   const rb = el('div', { class: 'viewer-round-bar' });
@@ -1021,19 +1083,25 @@ function renderViewer() {
   const ph = el('div', { class: 'viewer-phase' }, phases[s.subPhase] || phases[s.phase] || '');
   frag.appendChild(ph);
 
-  // Leaderboard
-  const lb = el('div', { class: 'viewer-lb' });
-  lb.appendChild(el('div', { class: 'viewer-lb-title' }, 'RANGLISTE'));
-  const sorted = (s.players || []).map((p, i) => ({ name: p.name || `Spieler ${i+1}`, total: (s.totals || [])[i] || 0, idx: i }));
-  sorted.sort((a, b) => b.total - a.total);
-  sorted.forEach((p, rank) => {
-    const row = el('div', { class: 'viewer-lb-row' + (p.idx === pi ? ' me' : '') });
-    row.appendChild(el('span', { class: 'viewer-lb-rank' }, `${rank + 1}.`));
-    row.appendChild(el('span', { class: 'viewer-lb-name' }, p.name));
-    row.appendChild(el('span', { class: 'viewer-lb-pts' }, String(p.total)));
-    lb.appendChild(row);
-  });
-  frag.appendChild(lb);
+  // Leaderboard – in der letzten Runde verborgen, damit der Sieger erst auf dem
+  // Siegerbildschirm enthüllt wird (kein Spoiler durch die Live-Rangliste).
+  const hideStandings = s.round >= 10 && (s.subPhase === 'results' || s.subPhase === 'summary');
+  if (!hideStandings) {
+    const lb = el('div', { class: 'viewer-lb' });
+    lb.appendChild(el('div', { class: 'viewer-lb-title' }, 'RANGLISTE'));
+    const sorted = (s.players || []).map((p, i) => ({ name: p.name || `Spieler ${i+1}`, total: (s.totals || [])[i] || 0, idx: i }));
+    sorted.sort((a, b) => b.total - a.total);
+    sorted.forEach((p, rank) => {
+      const row = el('div', { class: 'viewer-lb-row' + (p.idx === pi ? ' me' : '') });
+      row.appendChild(el('span', { class: 'viewer-lb-rank' }, `${rank + 1}.`));
+      row.appendChild(el('span', { class: 'viewer-lb-name' }, p.name));
+      row.appendChild(el('span', { class: 'viewer-lb-pts' }, String(p.total)));
+      lb.appendChild(row);
+    });
+    frag.appendChild(lb);
+  } else {
+    frag.appendChild(el('div', { class: 'viewer-lb', style: 'text-align:center;color:var(--text-dim);font-size:13px;padding:18px;' }, '🤫 Die Rangliste wird erst beim Endstand enthüllt …'));
+  }
   // Immer sichtbarer Verlassen-Link ganz unten
   const exitBtn = el('button', { class: 'btn-secondary', style: 'margin: 4px 16px 28px; display:block; width:calc(100% - 32px);', onclick: leaveRoom }, '← Verlassen');
   frag.appendChild(exitBtn);
@@ -1061,6 +1129,7 @@ function defaultState() {
     phase: 'setup',
     players: [{ name: '' }, { name: '' }, { name: '' }, { name: '' }],
     startDealerIdx: 3,
+    hostPlayerIdx: null,
     rulePlusMinus1: true,
     theme: 'dark',
     compact: true,
@@ -1103,6 +1172,7 @@ function loadState() {
         if (typeof p.showRoundGraph !== 'boolean') p.showRoundGraph = false;
         if (typeof p.soundEnabled !== 'boolean') p.soundEnabled = true;
         if (typeof p.viewerPredictEnabled !== 'boolean') p.viewerPredictEnabled = false;
+        if (typeof p.hostPlayerIdx !== 'number' || p.hostPlayerIdx < 0 || p.hostPlayerIdx >= n) p.hostPlayerIdx = null;
         for (const log of p.history) {
           if (!Array.isArray(log.errors)) log.errors = new Array(n).fill(0);
         }
@@ -1113,7 +1183,7 @@ function loadState() {
   return defaultState();
 }
 function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {} }
-function reset() { if (popupTimer) clearTimeout(popupTimer); const p = document.getElementById('ad-popup'); if (p) p.remove(); state = defaultState(); save(); render(); }
+function reset() { if (popupTimer) clearTimeout(popupTimer); const p = document.getElementById('ad-popup'); if (p) p.remove(); stopVictoryMelody(); state = defaultState(); save(); render(); }
 const _isResume = sessionStorage.getItem('rage_session') === '1';
 sessionStorage.setItem('rage_session', '1');
 state = _isResume ? loadState() : defaultState();
@@ -1217,6 +1287,7 @@ function initRound() {
 }
 function startGame() {
   if (nPlayers() < MIN_PLAYERS) return;
+  stopVictoryMelody();
   state.phase = 'playing';
   state.round = 1;
   state.totals = new Array(nPlayers()).fill(0);
@@ -1284,7 +1355,7 @@ function maybeAnnounceViewerNextRound(s) {
   const nextDealerIdx = (s.dealerIdx + 1) % n;
   const nextDealerName = (s.players[nextDealerIdx] && s.players[nextDealerIdx].name) || `Spieler ${nextDealerIdx + 1}`;
   const nextCards = cards(s.round + 1);
-  speak(`${nextCards} ${nextCards === 1 ? 'Karte' : 'Karten'}, Geber ${nextDealerName}`);
+  speak(nextCards === 1 ? `Eine Karte, Geber ${nextDealerName}` : `${nextCards} Karten, Geber ${nextDealerName}`);
 }
 let cachedDeVoice = null;
 function refreshDeVoice() {
@@ -1356,7 +1427,7 @@ function maybeAnnounceNextRound() {
   const nextDealerIdx = (getDealerIdx(state.round) + 1) % n;
   const nextDealerName = pName(nextDealerIdx);
   const nextCards = cards(state.round + 1);
-  speak(`${nextCards} ${nextCards === 1 ? 'Karte' : 'Karten'}, Geber ${nextDealerName}`);
+  speak(nextCards === 1 ? `Eine Karte, Geber ${nextDealerName}` : `${nextCards} Karten, Geber ${nextDealerName}`);
 }
 function submitPrediction(value) {
   const order = getTurnOrder(state.round);
@@ -1639,7 +1710,23 @@ function renderSetup() {
     codeWrap.appendChild(codeBig);
     codeWrap.appendChild(el('div', { class: 'mp-code-hint' }, 'Andere öffnen dieselbe URL und tippen diesen Code ein'));
     mpSec.appendChild(codeWrap);
-    mpSec.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:8px;font-size:12px;padding:8px 14px;', onclick: stopHost }, '✕ Mehrspieler beenden'));
+    const whoWrap = el('div', { style: 'margin-top:14px;' });
+    whoWrap.appendChild(el('div', { class: 'mp-code-label', style: 'margin-bottom:6px;' }, 'WER BIST DU?'));
+    whoWrap.appendChild(el('p', { class: 'hint', style: 'margin:0 0 8px;' }, 'Optional – hat keinen Einfluss auf das Spiel. Andere sehen dann, dass dieser Spieler bereits der Host ist.'));
+    const whoChips = el('div', { class: 'select-row' });
+    whoChips.appendChild(el('button', {
+      class: 'select-chip' + (state.hostPlayerIdx == null ? ' selected' : ''), tabindex: '-1',
+      onclick: () => { state.hostPlayerIdx = null; save(); pushToFirebase(); render(); },
+    }, '— keiner —'));
+    state.players.forEach((p, i) => {
+      whoChips.appendChild(el('button', {
+        class: 'select-chip' + (state.hostPlayerIdx === i ? ' selected' : ''), tabindex: '-1',
+        onclick: () => { state.hostPlayerIdx = i; save(); pushToFirebase(); render(); },
+      }, pName(i)));
+    });
+    whoWrap.appendChild(whoChips);
+    mpSec.appendChild(whoWrap);
+    mpSec.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:14px;font-size:12px;padding:8px 14px;', onclick: stopHost }, '✕ Mehrspieler beenden'));
   } else {
     const row = el('div', { class: 'mp-row' });
     row.appendChild(el('button', { class: 'btn-mp-host', onclick: startHost }, '📡 Host werden'));
@@ -2014,11 +2101,14 @@ function renderGameEnd() {
   const root = document.createDocumentFragment();
   const sorted = [...Array(nPlayers()).keys()].sort((a, b) => state.totals[b] - state.totals[a]);
   const winner = sorted[0];
-  const banner = el('div', { class: 'winner-banner' });
+  const amHostWinner = state.hostPlayerIdx != null && state.hostPlayerIdx === winner;
+  const banner = el('div', { class: 'winner-banner' + (amHostWinner ? ' me' : '') });
   banner.appendChild(el('div', { class: 'crown' }, '👑'));
   banner.appendChild(el('div', { class: 'name' }, pName(winner)));
   banner.appendChild(el('div', { class: 'pts' }, `${state.totals[winner]} PUNKTE`));
+  if (amHostWinner) banner.appendChild(el('div', { class: 'viewer-you-won' }, '🎉 DU HAST GEWONNEN! 🎉'));
   root.appendChild(banner);
+  if (amHostWinner) playVictoryMelody(); else stopVictoryMelody();
 
   const sec = el('div', { class: 'section' });
   sec.appendChild(el('h2', {}, 'ENDSTAND'));
