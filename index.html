@@ -1825,7 +1825,16 @@ function reset() {
   state.showRoundGraph = prevGraph; state.viewerPredictEnabled = prevVP;
   save(); applyTheme(); render();
 }
-const _isResume = sessionStorage.getItem('rage_session') === '1';
+// War dieses Gerät zuletzt Host eines Mehrspieler-Raums (mpHost in
+// localStorage, überlebt jeden Reload/PWA-Neustart), MUSS der echte
+// Spielstand geladen werden – sonst geht als Host der komplette Kartenstand
+// (Hände, Nachziehstapel) verloren, obwohl er in localStorage längst korrekt
+// gespeichert war. Ohne das würde ein Host-Reload immer auf einem leeren
+// "Neues Spiel"-Zustand landen, bevor die Raum-Wiederverbindung überhaupt
+// zum Zug kommt.
+let _hadHostSession = false;
+try { _hadHostSession = !!localStorage.getItem('mpHost'); } catch (e) {}
+const _isResume = _hadHostSession || sessionStorage.getItem('rage_session') === '1';
 sessionStorage.setItem('rage_session', '1');
 state = _isResume ? loadState() : defaultState();
 // Persönliche Einstellungen (Theme, Sound, Ansicht …) sollen über Neuladen/Reset
@@ -3258,7 +3267,12 @@ try {
     const { room } = JSON.parse(savedHost);
     if (room) { attachHostToRoom(room); hostResumed = true; }
   }
-} catch (e) { localStorage.removeItem('mpHost'); }
+} catch (e) {
+  // Den gemerkten Raumcode NICHT löschen – ein einmaliger, vorübergehender
+  // Fehler (z.B. Firebase noch nicht ganz bereit) soll nicht dazu führen,
+  // dass man beim nächsten Reload endgültig ausgesperrt bleibt.
+  console.error('Host-Session konnte nicht wiederherstellt werden:', e);
+}
 
 if (hostResumed) {
   render();
