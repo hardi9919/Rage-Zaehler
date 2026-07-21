@@ -409,6 +409,9 @@ input { -webkit-user-select: text; user-select: text; }
 .popup-close { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; border-radius: 50%; background: rgba(0,0,0,0.45); border: none; color: #fff; font-size: 18px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; z-index: 1; transition: background 0.15s; }
 .popup-close:hover { background: rgba(0,0,0,0.7); }
 @media (max-width: 480px) { .ad-perks { grid-template-columns: 1fr; } .ad-hero { height: 140px; } .ad-hero-title { font-size: 19px; } }
+.modal-overlay { position: fixed; inset: 0; z-index: 5500; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.72); backdrop-filter: blur(4px); padding: 20px; animation: fadeIn 0.2s ease; }
+.modal-box { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 16px; padding: 24px; max-width: 360px; width: 100%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+.modal-box .btn-primary, .modal-box .btn-secondary { width: 100%; }
 
 .foot-actions { text-align: center; margin-top: 16px; font-size: 11px; color: var(--text-dimmer); letter-spacing: 1px; }
 .foot-actions a { color: var(--text-dim); cursor: pointer; margin: 0 6px; text-decoration: underline; }
@@ -1230,12 +1233,75 @@ const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 8;
 const CHART_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316', '#ec4899', '#06b6d4'];
 
+// ─── DIGITALER KARTEN-MODUS: Kartendeck der Original-RAGE-Ausgabe ──────────
+// 96 Farbkarten (6 Farben x Werte 0-15) + 16 Aktionskarten
+// (2x Joker, 4x Kein Trumpf, 4x Trumpfwechsel, 3x +5, 3x -5).
+const CARD_COLORS = ['Gelb', 'Orange', 'Rot', 'Lila', 'Blau', 'Grün'];
+const CARD_COLOR_HEX = { Gelb: '#eab308', Orange: '#f97316', Rot: '#ef4444', Lila: '#a855f7', Blau: '#3b82f6', Grün: '#22c55e' };
+
+function buildFreshDeck() {
+  const deck = [];
+  CARD_COLORS.forEach(color => { for (let v = 0; v <= 15; v++) deck.push({ type: 'color', color, value: v }); });
+  for (let i = 0; i < 2; i++) deck.push({ type: 'joker' });
+  for (let i = 0; i < 4; i++) deck.push({ type: 'noTrump' });
+  for (let i = 0; i < 4; i++) deck.push({ type: 'trumpChange' });
+  for (let i = 0; i < 3; i++) deck.push({ type: 'plus5' });
+  for (let i = 0; i < 3; i++) deck.push({ type: 'minus5' });
+  return deck;
+}
+function shuffleDeck(deck) {
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+}
+// Deckt Karten vom Nachziehstapel auf, bis eine Farbkarte erscheint (bestimmt
+// die Trumpffarbe). Dabei aufgedeckte Sonderkarten werden verdeckt unter den
+// Nachziehstapel gelegt, wie es die Regeln für Trumpfwechsel/Kein Trumpf verlangen.
+// Mutiert drawPile direkt und gibt die gefundene Trumpf-Farbkarte zurück
+// (oder null, wenn der Nachziehstapel dabei leer wird).
+function drawUntilColorCard(drawPile) {
+  const setAside = [];
+  while (drawPile.length > 0) {
+    const card = drawPile.shift();
+    if (card.type === 'color') {
+      drawPile.push(...setAside);
+      return card;
+    }
+    setAside.push(card);
+  }
+  drawPile.push(...setAside);
+  return null;
+}
+// Baut den kompletten Kartenzustand für den Start einer digitalen Runde:
+// mischt ein frisches Deck, teilt an jeden Spieler die vorgesehene Kartenzahl
+// aus und bestimmt per Aufdecken die Start-Trumpffarbe der Runde.
+function initDigitalDeck(round) {
+  const n = nPlayers();
+  const cnt = cards(round);
+  const deck = shuffleDeck(buildFreshDeck());
+  const hands = [];
+  for (let p = 0; p < n; p++) hands.push(deck.splice(0, cnt));
+  const trumpCard = drawUntilColorCard(deck);
+  return {
+    hands,
+    drawPile: deck,
+    trumpColor: trumpCard ? trumpCard.color : null,
+    trumpIndicatorCard: trumpCard,
+    noTrumpThisTrick: false,
+    currentTrick: [],
+    trickLeader: null,
+  };
+}
+
 function defaultState() {
   return {
     phase: 'setup',
     players: [{ name: '' }, { name: '' }, { name: '' }, { name: '' }],
     startDealerIdx: 3,
     hostPlayerIdx: null,
+    gameMode: 'physical',
     rulePlusMinus1: true,
     theme: 'dark',
     compact: true,
@@ -1279,6 +1345,7 @@ function loadState() {
         if (typeof p.soundEnabled !== 'boolean') p.soundEnabled = true;
         if (typeof p.viewerPredictEnabled !== 'boolean') p.viewerPredictEnabled = false;
         if (typeof p.hostPlayerIdx !== 'number' || p.hostPlayerIdx < 0 || p.hostPlayerIdx >= n) p.hostPlayerIdx = null;
+        if (p.gameMode !== 'physical' && p.gameMode !== 'digital') p.gameMode = 'physical';
         for (const log of p.history) {
           if (!Array.isArray(log.errors)) log.errors = new Array(n).fill(0);
         }
@@ -1418,11 +1485,13 @@ function initRound() {
   state.errors = new Array(nPlayers()).fill(0);
   state.predictTurn = 0;
   state.subPhase = 'predict';
+  if (state.gameMode === 'digital') state.deck = initDigitalDeck(state.round);
 }
-function startGame() {
+function startGame(mode) {
   if (nPlayers() < MIN_PLAYERS) return;
   isCurrentWinnerScreen = false;
   stopVictoryMelody();
+  state.gameMode = mode === 'digital' ? 'digital' : 'physical';
   state.phase = 'playing';
   state.round = 1;
   state.totals = new Array(nPlayers()).fill(0);
@@ -1430,6 +1499,37 @@ function startGame() {
   initRound();
   schedulePopup();
   save(); render();
+}
+// Wird beim Klick auf "SPIEL STARTEN" gezeigt: Host wählt, ob mit echten
+// Karten (bisheriges Verhalten) oder digital in der App gespielt wird.
+// Digital erfordert einen laufenden Mehrspieler-Raum, da jeder Spieler seine
+// eigenen Handkarten auf seinem eigenen Gerät geheim halten muss.
+function openGameModeDialog() {
+  if (nPlayers() < MIN_PLAYERS) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'mode-dialog';
+  const box = document.createElement('div');
+  box.className = 'modal-box';
+  box.appendChild(el('h2', { style: 'margin-top:0;' }, 'Wie wird gespielt?'));
+  const physBtn = el('button', {
+    class: 'btn-primary', style: 'margin-top:14px;',
+    onclick: () => { overlay.remove(); startGame('physical'); }
+  }, '🃏 Mit echten Karten');
+  box.appendChild(physBtn);
+  const digitalEnabled = mpMode === 'host';
+  const digiBtn = el('button', {
+    class: 'btn-primary', style: 'margin-top:10px;' + (digitalEnabled ? '' : 'opacity:0.45;cursor:not-allowed;'),
+    disabled: !digitalEnabled,
+    onclick: () => { if (!digitalEnabled) return; overlay.remove(); startGame('digital'); }
+  }, '📱 Digital in der App');
+  box.appendChild(digiBtn);
+  if (!digitalEnabled) {
+    box.appendChild(el('p', { class: 'hint', style: 'margin-top:8px;' }, 'Erfordert einen laufenden Mehrspieler-Raum, damit jeder seine eigenen Handkarten auf dem eigenen Gerät geheim halten kann.'));
+  }
+  box.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:14px;', onclick: () => overlay.remove() }, 'Abbrechen'));
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
 let lastAnnouncedForbidden = null;
 let lastAnnouncedPlay = null;
@@ -1822,7 +1922,7 @@ function renderSetup() {
   dealerSec.appendChild(themeRow);
   root.appendChild(dealerSec);
 
-  root.appendChild(el('button', { class: 'btn-primary', 'data-start': '', onclick: startGame, disabled: nPlayers() < MIN_PLAYERS || false }, 'SPIEL STARTEN'));
+  root.appendChild(el('button', { class: 'btn-primary', 'data-start': '', onclick: openGameModeDialog, disabled: nPlayers() < MIN_PLAYERS || false }, 'SPIEL STARTEN'));
 
   const hint = el('div', { class: 'kbd-hint', html: 'Tipp: Alles per Numpad bedienbar – Zahlen tippen, <kbd>Enter</kbd> springt weiter.' });
   root.appendChild(hint);
