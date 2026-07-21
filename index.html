@@ -395,11 +395,12 @@ input { -webkit-user-select: text; user-select: text; }
 .hand-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .play-card { width: 56px; height: 78px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.25); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; font-family: "Bungee",sans-serif; box-shadow: 0 3px 8px rgba(0,0,0,0.35); flex-shrink: 0; }
 .play-card.small { width: 42px; height: 58px; }
-.play-card.disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.3); }
-.play-card:not(.disabled):active { transform: scale(0.94); }
+.play-card:disabled { cursor: default; }
+.play-card.dim { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.3); }
+.play-card:not(:disabled):active { transform: scale(0.94); }
 .play-card-value { font-size: 20px; line-height: 1; }
 .play-card.small .play-card-value { font-size: 15px; }
-.play-card-sub { font-size: 7px; letter-spacing: 0.5px; opacity: 0.85; text-align: center; padding: 0 2px; }
+.play-card-sub { font-size: 7px; line-height: 1.25; white-space: pre-line; letter-spacing: 0.5px; opacity: 0.85; text-align: center; padding: 0 2px; }
 .viewer-tip-list { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 .viewer-tip-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; border-radius: 8px; margin-bottom: 4px; background: var(--surface-3); }
 .viewer-tip-row.me { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.25); }
@@ -544,6 +545,18 @@ function startHost() {
     mpRoomRef.child('cardInput/' + turnIdx).remove();
     playDigitalCard(turnIdx, req.cardIdx, req.jokerColor || undefined);
   });
+  // Digitaler Kartenmodus: "Weiter" nach einem fertigen Stich – nur vom
+  // tatsächlichen Stichsieger angenommen (am Rundenende macht stattdessen
+  // ausschließlich der Host selbst weiter, siehe UI).
+  mpRoomRef.child('continueInput').on('value', snap => {
+    const inputs = snap.val();
+    if (!inputs || state.gameMode !== 'digital' || !state.deck) return;
+    if (!state.deck.trickComplete || state.deck.roundOver) return;
+    const winnerIdx = state.deck.trickWinner;
+    if (winnerIdx == null || !inputs[winnerIdx]) return;
+    mpRoomRef.child('continueInput/' + winnerIdx).remove();
+    confirmTrickContinue();
+  });
   window.addEventListener('beforeunload', stopHost);
   save(); render();
 }
@@ -582,11 +595,15 @@ function pushToFirebase() {
   if (state.gameMode === 'digital' && state.deck) {
     payload.deck = {
       trumpColor: state.deck.trumpColor,
+      trumpValue: state.deck.trumpIndicatorCard ? state.deck.trumpIndicatorCard.value : null,
       noTrumpThisTrick: !!state.deck.noTrumpThisTrick,
       currentTrick: state.deck.currentTrick || [],
       trickLeader: state.deck.trickLeader,
       turnIdx: state.deck.turnIdx,
       leadColor: state.deck.leadColor,
+      trickComplete: !!state.deck.trickComplete,
+      trickWinner: state.deck.trickWinner,
+      roundOver: !!state.deck.roundOver,
       drawPileCount: (state.deck.drawPile || []).length,
       handCounts: (state.deck.hands || []).map(h => h.length),
     };
@@ -1331,20 +1348,31 @@ function shuffleDeck(deck) {
 // Deckt Karten vom Nachziehstapel auf, bis eine Farbkarte erscheint (bestimmt
 // die Trumpffarbe). Dabei aufgedeckte Sonderkarten werden verdeckt unter den
 // Nachziehstapel gelegt, wie es die Regeln für Trumpfwechsel/Kein Trumpf verlangen.
-// Mutiert drawPile direkt und gibt die gefundene Trumpf-Farbkarte zurück
-// (oder null, wenn der Nachziehstapel dabei leer wird).
-function drawUntilColorCard(drawPile) {
+// Wird der Nachziehstapel dabei leer, wird der Ablagestapel (die bisherigen,
+// bereits abgelösten Trumpf-Anzeigekarten – wie bei UNO, ohne die aktuell
+// offen liegende Karte) gemischt und als neuer Nachziehstapel verwendet.
+// Erwartet ein deck-Objekt mit .drawPile und .discardPile (beide Arrays,
+// werden direkt mutiert). Gibt die gefundene Trumpf-Farbkarte zurück (oder
+// null, wenn wirklich keine Farbkarte mehr im Umlauf ist).
+function drawUntilColorCard(deck) {
   const setAside = [];
-  while (drawPile.length > 0) {
-    const card = drawPile.shift();
+  while (true) {
+    if (deck.drawPile.length === 0) {
+      if (deck.discardPile && deck.discardPile.length) {
+        deck.drawPile.push(...shuffleDeck(deck.discardPile));
+        deck.discardPile.length = 0;
+      } else {
+        deck.drawPile.push(...setAside);
+        return null;
+      }
+    }
+    const card = deck.drawPile.shift();
     if (card.type === 'color') {
-      drawPile.push(...setAside);
+      deck.drawPile.push(...setAside);
       return card;
     }
     setAside.push(card);
   }
-  drawPile.push(...setAside);
-  return null;
 }
 // Baut den kompletten Kartenzustand für den Start einer digitalen Runde:
 // mischt ein frisches Deck, teilt an jeden Spieler die vorgesehene Kartenzahl
@@ -1355,18 +1383,25 @@ function initDigitalDeck(round) {
   const deck = shuffleDeck(buildFreshDeck());
   const hands = [];
   for (let p = 0; p < n; p++) hands.push(deck.splice(0, cnt));
-  const trumpCard = drawUntilColorCard(deck);
-  return {
+  const result = {
     hands,
     drawPile: deck,
-    trumpColor: trumpCard ? trumpCard.color : null,
-    trumpIndicatorCard: trumpCard,
+    discardPile: [],
+    trumpColor: null,
+    trumpIndicatorCard: null,
     noTrumpThisTrick: false,
     currentTrick: [],
     trickLeader: null,
     turnIdx: null,
     leadColor: null,
+    trickComplete: false,
+    trickWinner: null,
+    roundOver: false,
   };
+  const trumpCard = drawUntilColorCard(result);
+  result.trumpColor = trumpCard ? trumpCard.color : null;
+  result.trumpIndicatorCard = trumpCard;
+  return result;
 }
 
 // ─── DIGITALER KARTEN-MODUS: Stich-Engine ──────────────────────────────────
@@ -1417,47 +1452,80 @@ function pickHighestEntry(entries) {
   });
   return best;
 }
-// Setzt eine neu aufgedeckte Trumpf-Anzeigekarte und legt die bisherige
-// Anzeigekarte (falls vorhanden) unten in den Nachziehstapel zurück. So
-// bleiben über die ganze Runde alle 112 Karten eindeutig im Umlauf – keine
-// Karte geht durch einen Trumpfwechsel verloren.
+// Setzt eine neu aufgedeckte Trumpf-Anzeigekarte. Die bisherige Anzeigekarte
+// (falls vorhanden) wandert auf den Ablagestapel – NICHT zurück in den
+// Nachziehstapel, denn im echten Spiel legt man die neue Karte einfach auf
+// die alte. Erst wenn der Nachziehstapel komplett leer ist, wird dieser
+// Ablagestapel gemischt und zum neuen Nachziehstapel (wie bei UNO).
 function setNewTrump(newCard) {
-  if (!newCard) return; // Nachziehstapel leer -> Trumpf bleibt wie er war
-  if (state.deck.trumpIndicatorCard) state.deck.drawPile.push(state.deck.trumpIndicatorCard);
+  if (!newCard) return; // Nachziehstapel (inkl. Ablage) leer -> Trumpf bleibt wie er war
+  if (state.deck.trumpIndicatorCard) state.deck.discardPile.push(state.deck.trumpIndicatorCard);
   state.deck.trumpColor = newCard.color;
   state.deck.trumpIndicatorCard = newCard;
 }
-// Wertet den abgeschlossenen Stich aus, schreibt Stich-/Bonuspunkte fort und
-// bereitet den nächsten Stich vor (Gewinner eröffnet). Prüft danach, ob die
-// Runde damit zu Ende gespielt ist.
+// Ermittelt, wer einen (ggf. noch unvollständigen) Stich mit den bisher
+// gespielten Karten gerade gewinnen würde: Trumpf schlägt alles, ohne Trumpf
+// gewinnt die höchste Karte der Anspielfarbe, und liegen nur Sonderkarten
+// (keine Joker) im Stich, "führt" die zuerst gelegte. Gibt null bei einem
+// leeren Stich zurück.
+function computeTrickLeader(trick, trumpColor, noTrumpThisTrick, leadColor) {
+  if (!trick.length) return null;
+  if (!noTrumpThisTrick && trumpColor) {
+    const trumpEntries = trick.filter(e => cardEffectiveColor(e) === trumpColor);
+    if (trumpEntries.length) return pickHighestEntry(trumpEntries).by;
+  }
+  if (leadColor) {
+    const leadEntries = trick.filter(e => cardEffectiveColor(e) === leadColor);
+    if (leadEntries.length) return pickHighestEntry(leadEntries).by;
+  }
+  return trick[0].by;
+}
+// Wertet den abgeschlossenen Stich aus und schreibt Stich-/Bonuspunkte fort.
+// Der Tisch bleibt danach zunächst so liegen (trickComplete=true), damit alle
+// den fertigen Stich sehen können – erst confirmTrickContinue() räumt ab und
+// gibt den nächsten Stich frei.
 function resolveDigitalTrick() {
   const trick = state.deck.currentTrick;
-  let winnerIdx = null;
-  if (!state.deck.noTrumpThisTrick && state.deck.trumpColor) {
-    const trumpEntries = trick.filter(e => cardEffectiveColor(e) === state.deck.trumpColor);
-    if (trumpEntries.length) winnerIdx = pickHighestEntry(trumpEntries).by;
-  }
-  if (winnerIdx == null && state.deck.leadColor) {
-    const leadEntries = trick.filter(e => cardEffectiveColor(e) === state.deck.leadColor);
-    if (leadEntries.length) winnerIdx = pickHighestEntry(leadEntries).by;
-  }
-  if (winnerIdx == null) winnerIdx = trick[0].by; // nur Sonderkarten (keine Joker): zuerst gelegte gewinnt
+  const winnerIdx = computeTrickLeader(trick, state.deck.trumpColor, state.deck.noTrumpThisTrick, state.deck.leadColor);
 
   state.tricksWon[winnerIdx]++;
   trick.forEach(e => {
     if (e.type === 'plus5') state.plus5[winnerIdx]++;
     if (e.type === 'minus5') state.minus5[winnerIdx]++;
   });
-
-  state.deck.currentTrick = [];
-  state.deck.leadColor = null;
-  state.deck.trickLeader = winnerIdx;
-  state.deck.turnIdx = winnerIdx;
   if (state.deck.noTrumpThisTrick) {
-    setNewTrump(drawUntilColorCard(state.deck.drawPile));
+    setNewTrump(drawUntilColorCard(state.deck));
     state.deck.noTrumpThisTrick = false;
   }
-  if (state.deck.hands.every(h => h.length === 0)) state.subPhase = 'results';
+  state.deck.trickWinner = winnerIdx;
+  state.deck.trickComplete = true;
+  state.deck.roundOver = state.deck.hands.every(h => h.length === 0);
+  state.deck.turnIdx = null;
+}
+// Räumt einen fertig angesehenen Stich ab und macht den nächsten frei. Wird
+// vom Stichsieger aufgerufen (er eröffnet ja den nächsten Stich) – außer am
+// Rundenende, dort macht der Host weiter (Übergang zur Ergebnis-Ansicht).
+function confirmTrickContinue() {
+  if (!state.deck || !state.deck.trickComplete) return false;
+  const winnerIdx = state.deck.trickWinner;
+  const wasRoundOver = state.deck.roundOver;
+  state.deck.currentTrick = [];
+  state.deck.leadColor = null;
+  state.deck.trickComplete = false;
+  state.deck.trickWinner = null;
+  state.deck.roundOver = false;
+  if (wasRoundOver) {
+    state.subPhase = 'results';
+    state.deck.trickLeader = null;
+    state.deck.turnIdx = null;
+  } else {
+    state.deck.trickLeader = winnerIdx;
+    state.deck.turnIdx = winnerIdx;
+  }
+  save();
+  if (mpMode === 'host') pushToFirebase();
+  render();
+  return true;
 }
 // Zentrale Aktion beim digitalen Kartenspiel: Spieler playerIdx spielt die
 // Karte an Position cardIdx aus seiner Hand (jokerColor nur bei Joker nötig).
@@ -1465,7 +1533,7 @@ function resolveDigitalTrick() {
 // Sofort-Effekte von Sonderkarten an und löst den Stich auf, wenn er voll ist.
 function playDigitalCard(playerIdx, cardIdx, jokerColor) {
   if (state.gameMode !== 'digital' || state.phase !== 'playing' || state.subPhase !== 'play') return false;
-  if (!state.deck || state.deck.turnIdx !== playerIdx) return false;
+  if (!state.deck || state.deck.trickComplete || state.deck.turnIdx !== playerIdx) return false;
   const hand = state.deck.hands[playerIdx];
   if (!isLegalCardPlay(hand, cardIdx, state.deck.leadColor)) return false;
   const card = hand[cardIdx];
@@ -1480,7 +1548,7 @@ function playDigitalCard(playerIdx, cardIdx, jokerColor) {
     if (effColor) state.deck.leadColor = effColor;
   }
   if (card.type === 'trumpChange') {
-    setNewTrump(drawUntilColorCard(state.deck.drawPile));
+    setNewTrump(drawUntilColorCard(state.deck));
     state.deck.noTrumpThisTrick = false;
   } else if (card.type === 'noTrump') {
     state.deck.noTrumpThisTrick = true;
@@ -1505,7 +1573,7 @@ function cardLabel(card) {
     case 'color': return String(card.value);
     case 'joker': return '🃏';
     case 'noTrump': return '⊘';
-    case 'trumpChange': return '⇄';
+    case 'trumpChange': return '❗';
     case 'plus5': return '+5';
     case 'minus5': return '−5';
     default: return '?';
@@ -1519,8 +1587,8 @@ function cardBg(card) {
 }
 function cardSubLabel(card) {
   if (card.type === 'joker') return 'JOKER';
-  if (card.type === 'noTrump') return 'KEIN TRUMPF';
-  if (card.type === 'trumpChange') return 'TRUMPFWECHSEL';
+  if (card.type === 'noTrump') return 'TRUMPF\nSTOPP';
+  if (card.type === 'trumpChange') return 'TRUMPF\nWECHSEL';
   return '';
 }
 // Liefert die Original-Indizes einer Hand in Anzeige-Reihenfolge: erst
@@ -1540,13 +1608,16 @@ function sortedHandOrder(hand) {
     return 0;
   });
 }
-// Baut die visuelle Darstellung einer einzelnen Spielkarte.
+// Baut die visuelle Darstellung einer einzelnen Spielkarte. Eine Karte sieht
+// nur dann "ausgegraut" (dim) aus, wenn man selbst am Zug ist und sie gerade
+// nicht spielen darf. Ist man nicht am Zug (kein onclick), bleibt die Karte
+// optisch ganz normal – nur eben nicht anklickbar.
 function renderCardEl(card, opts) {
   opts = opts || {};
   const box = el('button', {
-    class: 'play-card' + (opts.disabled ? ' disabled' : '') + (opts.small ? ' small' : ''),
+    class: 'play-card' + (opts.dim ? ' dim' : '') + (opts.small ? ' small' : ''),
     style: `background:${cardBg(card)};`,
-    disabled: !!opts.disabled,
+    disabled: !opts.onclick,
     onclick: opts.onclick || null,
   });
   box.appendChild(el('div', { class: 'play-card-value' }, cardLabel(card)));
@@ -1593,41 +1664,54 @@ function viewerPlayCard(cardIdx, hand) {
   if (card.type === 'joker') openJokerColorDialog(color => viewerRequestPlayCard(cardIdx, color));
   else viewerRequestPlayCard(cardIdx);
 }
+// Der Stichsieger bestätigt "Weiter", damit der nächste Stich freigegeben
+// wird. Am Rundenende macht stattdessen ausschließlich der Host weiter.
+function viewerRequestContinue() {
+  if (!mpRoomRef || mpViewerPlayerId == null) return;
+  mpRoomRef.child('continueInput/' + mpViewerPlayerId).set(true);
+}
 // Baut das Handkarten-Panel für den Viewer: eigene Karten (aus mpViewerHand,
 // privat über Firebase zugestellt), plus – während des Stichspiels – den
 // aktuellen Stich und eine Zug-Anzeige.
 function renderDigitalHandPanel(s, pi) {
+  const nameOf = idx => (s.players[idx] && s.players[idx].name) || `Spieler ${idx + 1}`;
   const wrap = el('div', { class: 'digital-panel' });
   if (s.deck && s.deck.trumpColor) {
     const trumpRow = el('div', { class: 'trump-row' });
     trumpRow.appendChild(el('span', {}, 'Trumpf:'));
-    trumpRow.appendChild(el('span', { class: 'trump-chip', style: `background:${CARD_COLOR_HEX[s.deck.trumpColor]};` }, s.deck.trumpColor));
-    if (s.deck.noTrumpThisTrick) trumpRow.appendChild(el('span', { class: 'badge dim' }, 'Kein Trumpf (dieser Stich)'));
+    trumpRow.appendChild(el('span', { class: 'trump-chip', style: `background:${CARD_COLOR_HEX[s.deck.trumpColor]};` }, `${s.deck.trumpColor} ${s.deck.trumpValue != null ? s.deck.trumpValue : ''}`));
+    if (s.deck.noTrumpThisTrick) trumpRow.appendChild(el('span', { class: 'badge dim' }, 'Trumpf Stopp (dieser Stich)'));
     wrap.appendChild(trumpRow);
   }
   if (s.subPhase === 'play' && s.deck) {
-    const isMyTurn = s.deck.turnIdx === pi;
     const trickWrap = el('div', { class: 'trick-area' });
-    trickWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin-bottom:6px;' }, 'AKTUELLER STICH'));
+    const leaderIdx = computeTrickLeader(s.deck.currentTrick || [], s.deck.trumpColor, s.deck.noTrumpThisTrick, s.deck.leadColor);
+    trickWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin-bottom:6px;' },
+      'AKTUELLER STICH' + (leaderIdx != null ? ': ' + nameOf(leaderIdx) : '')));
     if (!s.deck.currentTrick || !s.deck.currentTrick.length) {
       trickWrap.appendChild(el('p', { class: 'hint' }, 'Noch keine Karte gespielt.'));
     } else {
       const row = el('div', { class: 'trick-cards' });
       s.deck.currentTrick.forEach(entry => {
-        const cardEl = renderCardEl(entry, { small: true, disabled: true });
-        const nm = (s.players[entry.by] && s.players[entry.by].name) || `Spieler ${entry.by + 1}`;
         const col = el('div', { class: 'trick-card-col' });
-        col.appendChild(cardEl);
-        col.appendChild(el('div', { class: 'trick-card-name' }, nm));
+        col.appendChild(renderCardEl(entry, { small: true }));
+        col.appendChild(el('div', { class: 'trick-card-name' }, nameOf(entry.by)));
         row.appendChild(col);
       });
       trickWrap.appendChild(row);
     }
-    if (isMyTurn) {
+    if (s.deck.trickComplete) {
+      if (s.deck.roundOver) {
+        trickWrap.appendChild(el('div', { class: 'viewer-info-line' }, 'Runde beendet – der Gastgeber macht weiter …'));
+      } else if (s.deck.trickWinner === pi) {
+        trickWrap.appendChild(el('button', { class: 'btn-primary', style: 'margin-top:10px;', onclick: viewerRequestContinue }, `🏆 Stich gewonnen! Weiter →`));
+      } else {
+        trickWrap.appendChild(el('div', { class: 'viewer-info-line' }, `Stich beendet. Wartet auf ${nameOf(s.deck.trickWinner)} …`));
+      }
+    } else if (s.deck.turnIdx === pi) {
       trickWrap.appendChild(el('div', { class: 'viewer-my-turn-badge' }, '👉 Du bist am Zug!'));
     } else if (s.deck.turnIdx != null) {
-      const curName = (s.players[s.deck.turnIdx] && s.players[s.deck.turnIdx].name) || `Spieler ${s.deck.turnIdx + 1}`;
-      trickWrap.appendChild(el('div', { class: 'viewer-info-line' }, `Am Zug: ${curName}`));
+      trickWrap.appendChild(el('div', { class: 'viewer-info-line' }, `Am Zug: ${nameOf(s.deck.turnIdx)}`));
     }
     wrap.appendChild(trickWrap);
   }
@@ -1638,13 +1722,13 @@ function renderDigitalHandPanel(s, pi) {
     handWrap.appendChild(el('p', { class: 'hint' }, 'Warte auf die Zustellung deiner Karten…'));
   } else {
     const row = el('div', { class: 'hand-row' });
-    const canPlay = s.subPhase === 'play' && s.deck && s.deck.turnIdx === pi;
+    const canPlay = s.subPhase === 'play' && s.deck && !s.deck.trickComplete && s.deck.turnIdx === pi;
     sortedHandOrder(hand).forEach(idx => {
       const c = hand[idx];
       const legal = canPlay && isLegalCardPlay(hand, idx, s.deck.leadColor);
       row.appendChild(renderCardEl(c, {
-        disabled: !canPlay || !legal,
-        onclick: (canPlay && legal) ? () => viewerPlayCard(idx, hand) : null,
+        dim: canPlay && !legal,
+        onclick: legal ? () => viewerPlayCard(idx, hand) : null,
       }));
     });
     handWrap.appendChild(row);
@@ -2487,14 +2571,14 @@ function renderPredict() {
     if (state.deck.trumpColor) {
       const trumpRow = el('div', { class: 'trump-row' });
       trumpRow.appendChild(el('span', {}, 'Trumpf:'));
-      trumpRow.appendChild(el('span', { class: 'trump-chip', style: `background:${CARD_COLOR_HEX[state.deck.trumpColor]};` }, state.deck.trumpColor));
+      trumpRow.appendChild(el('span', { class: 'trump-chip', style: `background:${CARD_COLOR_HEX[state.deck.trumpColor]};` }, `${state.deck.trumpColor} ${state.deck.trumpIndicatorCard ? state.deck.trumpIndicatorCard.value : ''}`));
       handSec.appendChild(trumpRow);
     }
     if (state.hostPlayerIdx != null) {
       const hand = state.deck.hands[state.hostPlayerIdx] || [];
       handSec.appendChild(el('h2', { style: 'margin-top:10px;' }, `DEINE KARTEN (${pName(state.hostPlayerIdx)})`));
       const row = el('div', { class: 'hand-row' });
-      sortedHandOrder(hand).forEach(idx => row.appendChild(renderCardEl(hand[idx], { disabled: true })));
+      sortedHandOrder(hand).forEach(idx => row.appendChild(renderCardEl(hand[idx], {})));
       handSec.appendChild(row);
     }
     root.appendChild(handSec);
@@ -2582,6 +2666,10 @@ function renderPlay() {
 // eigenen klickbaren Handkarten. Der Übergang zu "STICHE EINTRAGEN" entfällt
 // hier, weil die Stich-Engine tricksWon/plus5/minus5 automatisch befüllt und
 // selbst zur Ergebnis-Ansicht weiterschaltet, sobald alle Hände leer sind.
+// Host-Ansicht während des digitalen Stichspiels. Zeigt bewusst dieselben
+// Infos wie der Viewer-Bildschirm (Tipps, aktueller Stich, wer am Zug ist) –
+// der Host ist in diesem Moment ja selbst nur ein Spieler unter vielen. Die
+// eigenen Handkarten kommen nur dazu, wenn der Host sich selbst zugeordnet hat.
 function renderDigitalPlay() {
   const root = document.createDocumentFragment();
   root.appendChild(renderRoundBanner());
@@ -2591,41 +2679,55 @@ function renderDigitalPlay() {
   if (deck.trumpColor) {
     const trumpRow = el('div', { class: 'trump-row' });
     trumpRow.appendChild(el('span', {}, 'Trumpf:'));
-    trumpRow.appendChild(el('span', { class: 'trump-chip', style: `background:${CARD_COLOR_HEX[deck.trumpColor]};` }, deck.trumpColor));
-    if (deck.noTrumpThisTrick) trumpRow.appendChild(el('span', { class: 'badge dim' }, 'Kein Trumpf (dieser Stich)'));
+    trumpRow.appendChild(el('span', { class: 'trump-chip', style: `background:${CARD_COLOR_HEX[deck.trumpColor]};` }, `${deck.trumpColor} ${deck.trumpIndicatorCard ? deck.trumpIndicatorCard.value : ''}`));
+    if (deck.noTrumpThisTrick) trumpRow.appendChild(el('span', { class: 'badge dim' }, 'Trumpf Stopp (dieser Stich)'));
     trumpRow.appendChild(el('span', { class: 'hint', style: 'margin-left:auto;' }, `Nachziehstapel: ${(deck.drawPile || []).length}`));
     sec.appendChild(trumpRow);
   }
+
+  const tipList = el('div', { class: 'viewer-tip-list' });
+  tipList.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin-bottom:8px;' }, 'TIPPS'));
+  getTurnOrder(state.round).forEach(playerIdx => {
+    const row = el('div', { class: 'viewer-tip-row' + (playerIdx === state.hostPlayerIdx ? ' me' : '') });
+    row.appendChild(el('span', { class: 'viewer-tip-name' }, pName(playerIdx)));
+    const tip = state.predictions[playerIdx];
+    row.appendChild(el('span', { class: 'viewer-tip-val' + (tip == null ? ' pending' : '') }, tip != null ? String(tip) : '…'));
+    tipList.appendChild(row);
+  });
+  sec.appendChild(tipList);
+
   const trickWrap = el('div', { class: 'trick-area' });
-  trickWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin-bottom:6px;' }, 'AKTUELLER STICH'));
+  const leaderIdx = computeTrickLeader(deck.currentTrick || [], deck.trumpColor, deck.noTrumpThisTrick, deck.leadColor);
+  trickWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin-bottom:6px;' },
+    'AKTUELLER STICH' + (leaderIdx != null ? ': ' + pName(leaderIdx) : '')));
   if (!deck.currentTrick || !deck.currentTrick.length) {
     trickWrap.appendChild(el('p', { class: 'hint' }, 'Noch keine Karte gespielt.'));
   } else {
     const row = el('div', { class: 'trick-cards' });
     deck.currentTrick.forEach(entry => {
       const col = el('div', { class: 'trick-card-col' });
-      col.appendChild(renderCardEl(entry, { small: true, disabled: true }));
+      col.appendChild(renderCardEl(entry, { small: true }));
       col.appendChild(el('div', { class: 'trick-card-name' }, pName(entry.by)));
       row.appendChild(col);
     });
     trickWrap.appendChild(row);
   }
+  if (deck.trickComplete) {
+    if (deck.roundOver) {
+      trickWrap.appendChild(el('button', { class: 'btn-primary', style: 'margin-top:10px;', onclick: confirmTrickContinue }, '🏁 Runde beenden – Weiter zu den Ergebnissen →'));
+    } else if (deck.trickWinner === state.hostPlayerIdx) {
+      trickWrap.appendChild(el('button', { class: 'btn-primary', style: 'margin-top:10px;', onclick: confirmTrickContinue }, '🏆 Stich gewonnen! Weiter →'));
+    } else {
+      trickWrap.appendChild(el('div', { class: 'viewer-info-line' }, `Stich beendet. Wartet auf ${pName(deck.trickWinner)} …`));
+    }
+  } else if (deck.turnIdx != null) {
+    trickWrap.appendChild(el('div', { class: deck.turnIdx === state.hostPlayerIdx ? 'viewer-my-turn-badge' : 'viewer-info-line' },
+      deck.turnIdx === state.hostPlayerIdx ? '👉 Du bist am Zug!' : `Am Zug: ${pName(deck.turnIdx)}`));
+  }
   sec.appendChild(trickWrap);
 
-  const handSizes = el('div', { class: 'play-list' });
-  for (let i = 0; i < nPlayers(); i++) {
-    const row = el('div', { class: 'play-row' + (deck.turnIdx === i ? ' starter' : '') });
-    const nm = el('div', { class: 'play-name' });
-    nm.appendChild(el('span', {}, pName(i)));
-    if (deck.turnIdx === i) nm.appendChild(el('span', { class: 'badge' }, 'AM ZUG'));
-    row.appendChild(nm);
-    row.appendChild(el('div', { class: 'play-tip' }, String((deck.hands && deck.hands[i]) ? deck.hands[i].length : 0)));
-    handSizes.appendChild(row);
-  }
-  sec.appendChild(handSizes);
-
   if (state.hostPlayerIdx != null) {
-    const canPlay = deck.turnIdx === state.hostPlayerIdx;
+    const canPlay = !deck.trickComplete && deck.turnIdx === state.hostPlayerIdx;
     const hand = deck.hands[state.hostPlayerIdx] || [];
     const handWrap = el('div', { class: 'hand-wrap' });
     handWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin:10px 0 6px;' }, 'DEINE KARTEN'));
@@ -2633,13 +2735,10 @@ function renderDigitalPlay() {
     sortedHandOrder(hand).forEach(idx => {
       const c = hand[idx];
       const legal = canPlay && isLegalCardPlay(hand, idx, deck.leadColor);
-      row.appendChild(renderCardEl(c, { disabled: !legal, onclick: legal ? () => hostPlayCard(idx) : null }));
+      row.appendChild(renderCardEl(c, { dim: canPlay && !legal, onclick: legal ? () => hostPlayCard(idx) : null }));
     });
     handWrap.appendChild(row);
     sec.appendChild(handWrap);
-    if (!canPlay && deck.turnIdx != null) sec.appendChild(el('p', { class: 'hint' }, `Warte auf ${pName(deck.turnIdx)} …`));
-  } else if (deck.turnIdx != null) {
-    sec.appendChild(el('p', { class: 'hint' }, `Warte auf ${pName(deck.turnIdx)} …`));
   }
 
   root.appendChild(sec);
