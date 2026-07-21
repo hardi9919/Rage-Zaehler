@@ -481,9 +481,15 @@ function subscribeToOwnHand() {
   mpHandRef = fbDb.ref('rooms/' + mpRoomCode + '_hands/' + mpViewerPlayerId);
   mpHandRef.on('value', snap => { mpViewerHand = snap.val() || []; renderViewer(); });
 }
-let mpViewerSessionId = sessionStorage.getItem('rage_vsid') || (() => {
+// localStorage statt sessionStorage: die Session-ID und die Raum/Spieler-
+// Zuordnung müssen einen Reload, ein "Runterziehen zum Aktualisieren" oder
+// einen kompletten PWA-Neustart überleben. Mit sessionStorage würde dabei
+// eine neue Session-ID entstehen, der eigene Platz erschiene dann für einen
+// selbst als "belegt" (durch die eigene, jetzt verwaiste alte ID) und man
+// käme nicht mehr ins laufende Spiel zurück – das Spiel hinge fest.
+let mpViewerSessionId = localStorage.getItem('rage_vsid') || (() => {
   const id = Math.random().toString(36).slice(2, 10);
-  sessionStorage.setItem('rage_vsid', id);
+  localStorage.setItem('rage_vsid', id);
   return id;
 })();
 let mpViewerState = null;
@@ -625,7 +631,7 @@ function joinRoom(code) {
     mpRoomCode = code.toUpperCase().trim();
     mpRoomRef = ref;
     mpConnected = true;
-    sessionStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode }));
+    localStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode }));
     // Separate Selections-Ref (wird nicht vom Host überschrieben)
     mpSelRef = fbDb.ref('rooms/' + mpRoomCode + '_sel');
     mpSelRef.on('value', snap => { mpViewerSelections = snap.val() || {}; renderViewer(); });
@@ -656,7 +662,7 @@ function leaveRoom() {
   }
   if (mpHandRef) { mpHandRef.off(); mpHandRef = null; }
   mpViewerHand = null;
-  sessionStorage.removeItem('mpViewer');
+  localStorage.removeItem('mpViewer');
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   mpViewerPlayerId = null; mpViewerState = null; mpConnected = false;
   mpViewerSelections = {};
@@ -980,7 +986,7 @@ function renderViewer() {
               mpSelRef.child(String(mpViewerPlayerId)).remove().catch(() => {});
             mpViewerPlayerId = i;
             if (mpSelRef) mpSelRef.child(String(i)).set(mpViewerSessionId);
-            try { sessionStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode, playerId: i })); } catch (e) {}
+            try { localStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode, playerId: i })); } catch (e) {}
             subscribeToOwnHand();
             renderViewer();
           }
@@ -3237,23 +3243,24 @@ document.addEventListener('visibilitychange', () => {
 });
 requestWakeLock();
 
-// Viewer-Session nach Reload wiederherstellen
+// Viewer-Session nach Reload/PWA-Neustart wiederherstellen (localStorage,
+// damit auch ein komplettes Beenden+Neuöffnen der App den Platz nicht verliert)
 try {
-  const saved = sessionStorage.getItem('mpViewer');
+  const saved = localStorage.getItem('mpViewer');
   if (saved) {
     const { room, playerId } = JSON.parse(saved);
     if (room && firebaseReady()) {
       if (playerId != null) mpViewerPlayerId = playerId;
       joinRoom(room);
     } else {
-      sessionStorage.removeItem('mpViewer');
+      localStorage.removeItem('mpViewer');
       render();
     }
   } else {
     render();
   }
 } catch (e) {
-  sessionStorage.removeItem('mpViewer');
+  localStorage.removeItem('mpViewer');
   render();
 }
 </script>
