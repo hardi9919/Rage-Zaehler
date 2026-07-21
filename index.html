@@ -533,8 +533,24 @@ function pushToFirebase() {
     cardsThisRound: (state.phase === 'playing') ? cards(state.round) : 0,
     viewerPredictEnabled: !!state.viewerPredictEnabled,
     hostPlayerIdx: (typeof state.hostPlayerIdx === 'number') ? state.hostPlayerIdx : null,
+    gameMode: state.gameMode || 'physical',
     ts: Date.now()
   };
+  // Digitaler Kartenmodus: nur die nicht-geheimen Teile mitsenden (niemals die
+  // Handkarten aller Spieler zusammen!). Die private Zustellung der eigenen
+  // Hand pro Spieler folgt in einem späteren Ausbauschritt (UI).
+  if (state.gameMode === 'digital' && state.deck) {
+    payload.deck = {
+      trumpColor: state.deck.trumpColor,
+      noTrumpThisTrick: !!state.deck.noTrumpThisTrick,
+      currentTrick: state.deck.currentTrick || [],
+      trickLeader: state.deck.trickLeader,
+      turnIdx: state.deck.turnIdx,
+      leadColor: state.deck.leadColor,
+      drawPileCount: (state.deck.drawPile || []).length,
+      handCounts: (state.deck.hands || []).map(h => h.length),
+    };
+  }
   mpRoomRef.set(payload).catch(e => console.warn('Firebase sync:', e));
 }
 
@@ -1292,7 +1308,131 @@ function initDigitalDeck(round) {
     noTrumpThisTrick: false,
     currentTrick: [],
     trickLeader: null,
+    turnIdx: null,
+    leadColor: null,
   };
+}
+
+// ─── DIGITALER KARTEN-MODUS: Stich-Engine ──────────────────────────────────
+// Wird beim Übergang von der Tipp-Phase in die Spielphase aufgerufen: legt
+// fest, wer den ersten Stich eröffnet (= wer zuerst getippt hat, wie bei
+// echten Karten) und setzt den Stich-Zustand zurück.
+function startDigitalPlay() {
+  if (state.gameMode !== 'digital' || !state.deck) return;
+  const leaderIdx = getTurnOrder(state.round)[0];
+  state.deck.trickLeader = leaderIdx;
+  state.deck.turnIdx = leaderIdx;
+  state.deck.leadColor = null;
+  state.deck.currentTrick = [];
+}
+// Reihenfolge innerhalb eines Stichs: beginnt beim Stich-Eröffner, dann im Uhrzeigersinn.
+function getTrickTurnOrder(leaderIdx) {
+  const n = nPlayers(), order = [];
+  for (let i = 0; i < n; i++) order.push((leaderIdx + i) % n);
+  return order;
+}
+// Die "wirksame Farbe" einer im Stich liegenden Karte: bei Farbkarten ihre
+// Farbe, bei einem Joker die angesagte Farbe, bei allen anderen Sonderkarten
+// keine Farbe (können also nie über Trumpf/Anspielfarbe gewinnen).
+function cardEffectiveColor(entry) {
+  if (entry.type === 'color') return entry.color;
+  if (entry.type === 'joker') return entry.jokerColor;
+  return null;
+}
+// Prüft, ob das Spielen von hand[cardIdx] regelkonform ist, wenn leadColor
+// die im aktuellen Stich zu bedienende Farbe ist (null = noch keine Farbe
+// festgelegt, dann ist jede Karte erlaubt).
+function isLegalCardPlay(hand, cardIdx, leadColor) {
+  if (cardIdx < 0 || cardIdx >= hand.length) return false;
+  if (leadColor == null) return true;
+  const hasLead = hand.some(c => c.type === 'color' && c.color === leadColor);
+  if (!hasLead) return true;
+  const card = hand[cardIdx];
+  return card.type === 'color' && card.color === leadColor;
+}
+// Ermittelt aus mehreren im Stich liegenden Karten derselben wirksamen Farbe
+// die höchste: Joker gelten immer als höchste Karte ihrer Farbe, bei zwei
+// Jokern derselben Farbe gewinnt der später gespielte.
+function pickHighestEntry(entries) {
+  let best = null, bestRank = -Infinity;
+  entries.forEach(e => {
+    const rank = e.type === 'joker' ? (1000 + e.playOrder) : e.value;
+    if (rank > bestRank) { bestRank = rank; best = e; }
+  });
+  return best;
+}
+// Wertet den abgeschlossenen Stich aus, schreibt Stich-/Bonuspunkte fort und
+// bereitet den nächsten Stich vor (Gewinner eröffnet). Prüft danach, ob die
+// Runde damit zu Ende gespielt ist.
+function resolveDigitalTrick() {
+  const trick = state.deck.currentTrick;
+  let winnerIdx = null;
+  if (!state.deck.noTrumpThisTrick && state.deck.trumpColor) {
+    const trumpEntries = trick.filter(e => cardEffectiveColor(e) === state.deck.trumpColor);
+    if (trumpEntries.length) winnerIdx = pickHighestEntry(trumpEntries).by;
+  }
+  if (winnerIdx == null && state.deck.leadColor) {
+    const leadEntries = trick.filter(e => cardEffectiveColor(e) === state.deck.leadColor);
+    if (leadEntries.length) winnerIdx = pickHighestEntry(leadEntries).by;
+  }
+  if (winnerIdx == null) winnerIdx = trick[0].by; // nur Sonderkarten (keine Joker): zuerst gelegte gewinnt
+
+  state.tricksWon[winnerIdx]++;
+  trick.forEach(e => {
+    if (e.type === 'plus5') state.plus5[winnerIdx]++;
+    if (e.type === 'minus5') state.minus5[winnerIdx]++;
+  });
+
+  state.deck.currentTrick = [];
+  state.deck.leadColor = null;
+  state.deck.trickLeader = winnerIdx;
+  state.deck.turnIdx = winnerIdx;
+  if (state.deck.noTrumpThisTrick) {
+    const newTrump = drawUntilColorCard(state.deck.drawPile);
+    if (newTrump) { state.deck.trumpColor = newTrump.color; state.deck.trumpIndicatorCard = newTrump; }
+    state.deck.noTrumpThisTrick = false;
+  }
+  if (state.deck.hands.every(h => h.length === 0)) state.subPhase = 'results';
+}
+// Zentrale Aktion beim digitalen Kartenspiel: Spieler playerIdx spielt die
+// Karte an Position cardIdx aus seiner Hand (jokerColor nur bei Joker nötig).
+// Validiert Zugreihenfolge und Farbzwang serverseitig (beim Host), wendet
+// Sofort-Effekte von Sonderkarten an und löst den Stich auf, wenn er voll ist.
+function playDigitalCard(playerIdx, cardIdx, jokerColor) {
+  if (state.gameMode !== 'digital' || state.phase !== 'playing' || state.subPhase !== 'play') return false;
+  if (!state.deck || state.deck.turnIdx !== playerIdx) return false;
+  const hand = state.deck.hands[playerIdx];
+  if (!isLegalCardPlay(hand, cardIdx, state.deck.leadColor)) return false;
+  const card = hand[cardIdx];
+  if (card.type === 'joker' && !CARD_COLORS.includes(jokerColor)) return false;
+
+  hand.splice(cardIdx, 1);
+  const entry = { ...card, by: playerIdx, playOrder: state.deck.currentTrick.length };
+  if (card.type === 'joker') entry.jokerColor = jokerColor;
+
+  if (state.deck.leadColor == null) {
+    const effColor = cardEffectiveColor(entry);
+    if (effColor) state.deck.leadColor = effColor;
+  }
+  if (card.type === 'trumpChange') {
+    const newTrump = drawUntilColorCard(state.deck.drawPile);
+    if (newTrump) { state.deck.trumpColor = newTrump.color; state.deck.trumpIndicatorCard = newTrump; }
+    state.deck.noTrumpThisTrick = false;
+  } else if (card.type === 'noTrump') {
+    state.deck.noTrumpThisTrick = true;
+  }
+
+  state.deck.currentTrick.push(entry);
+  if (state.deck.currentTrick.length >= nPlayers()) {
+    resolveDigitalTrick();
+  } else {
+    const order = getTrickTurnOrder(state.deck.trickLeader);
+    state.deck.turnIdx = order[state.deck.currentTrick.length];
+  }
+  save();
+  if (mpMode === 'host') pushToFirebase();
+  render();
+  return true;
 }
 
 function defaultState() {
@@ -1668,7 +1808,10 @@ function submitPrediction(value) {
   const order = getTurnOrder(state.round);
   state.predictions[order[state.predictTurn]] = value;
   state.predictTurn++;
-  if (state.predictTurn >= nPlayers()) state.subPhase = 'play';
+  if (state.predictTurn >= nPlayers()) {
+    state.subPhase = 'play';
+    startDigitalPlay();
+  }
   else {
     if (state.predictTurn === nPlayers() - 2 && state.rulePlusMinus1 && state.round !== 10) warmUpSpeech();
     maybeAnnounceForbidden();
