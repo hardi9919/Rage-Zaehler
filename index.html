@@ -1209,7 +1209,11 @@ function renderViewer() {
         const nameSpan = el('span', { class: 'viewer-tip-name' }, pname);
         if (isCurrent) nameSpan.appendChild(el('span', { class: 'badge', style: 'margin-left:6px;font-size:9px;' }, 'JETZT'));
         row.appendChild(nameSpan);
-        row.appendChild(el('span', { class: 'viewer-tip-val' + (tip === null ? ' pending' : '') }, tip !== null ? String(tip) : '…'));
+        const showProgress = s.gameMode === 'digital' && s.subPhase === 'play' && tip !== null;
+        const tipText = showProgress
+          ? `${(s.tricksWon && s.tricksWon[playerIdx]) || 0} / ${tip}`
+          : (tip !== null ? String(tip) : '…');
+        row.appendChild(el('span', { class: 'viewer-tip-val' + (tip === null ? ' pending' : '') }, tipText));
         tipList.appendChild(row);
       });
       card.appendChild(tipList);
@@ -2691,7 +2695,8 @@ function renderDigitalPlay() {
     const row = el('div', { class: 'viewer-tip-row' + (playerIdx === state.hostPlayerIdx ? ' me' : '') });
     row.appendChild(el('span', { class: 'viewer-tip-name' }, pName(playerIdx)));
     const tip = state.predictions[playerIdx];
-    row.appendChild(el('span', { class: 'viewer-tip-val' + (tip == null ? ' pending' : '') }, tip != null ? String(tip) : '…'));
+    const tipText = tip != null ? `${state.tricksWon[playerIdx] || 0} / ${tip}` : '…';
+    row.appendChild(el('span', { class: 'viewer-tip-val' + (tip == null ? ' pending' : '') }, tipText));
     tipList.appendChild(row);
   });
   sec.appendChild(tipList);
