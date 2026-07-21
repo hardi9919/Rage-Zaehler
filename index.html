@@ -384,6 +384,22 @@ input { -webkit-user-select: text; user-select: text; }
 .viewer-forbidden { font-size: 14px; font-weight: 700; color: var(--accent); background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 8px 12px; margin-top: 4px; }
 .viewer-next-round-banner { font-size: 19px; font-weight: 800; color: #fff; background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%); border: 1px solid var(--accent-dark); border-radius: 12px; padding: 16px 14px; margin: 16px 0; text-align: center; letter-spacing: 0.5px; box-shadow: 0 6px 18px rgba(239,68,68,0.4); }
 .viewer-my-turn-badge { font-size: 15px; font-weight: 800; color: #22c55e; background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.35); border-radius: 8px; padding: 8px 12px; margin-top: 2px; }
+.digital-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.trump-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); margin-bottom: 10px; flex-wrap: wrap; }
+.trump-chip { color: #fff; font-weight: 800; font-size: 12px; letter-spacing: 0.5px; padding: 4px 10px; border-radius: 6px; }
+.trick-area { margin-bottom: 12px; }
+.trick-cards { display: flex; gap: 8px; flex-wrap: wrap; }
+.trick-card-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.trick-card-name { font-size: 10px; color: var(--text-dim); max-width: 64px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hand-wrap { margin-top: 8px; }
+.hand-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.play-card { width: 56px; height: 78px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.25); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; font-family: "Bungee",sans-serif; box-shadow: 0 3px 8px rgba(0,0,0,0.35); flex-shrink: 0; }
+.play-card.small { width: 42px; height: 58px; }
+.play-card.disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.3); }
+.play-card:not(.disabled):active { transform: scale(0.94); }
+.play-card-value { font-size: 20px; line-height: 1; }
+.play-card.small .play-card-value { font-size: 15px; }
+.play-card-sub { font-size: 7px; letter-spacing: 0.5px; opacity: 0.85; text-align: center; padding: 0 2px; }
 .viewer-tip-list { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 .viewer-tip-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; border-radius: 8px; margin-bottom: 4px; background: var(--surface-3); }
 .viewer-tip-row.me { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.25); }
@@ -452,6 +468,18 @@ let mpViewerSelections = {};
 let mpSelRef = null;
 let mpHostSelections = {};
 let mpHostSelRef = null;
+let mpHandRef = null;
+let mpViewerHand = null; // eigene Handkarten im digitalen Kartenmodus (nur die eigenen!)
+// Abonniert (bzw. wechselt) die private Zustellung der eigenen Handkarten.
+// Läuft über einen eigenen Firebase-Pfad ('rooms/<code>_hands/<idx>'), damit
+// niemand außer dem jeweiligen Spieler seine eigene Hand zu sehen bekommt.
+function subscribeToOwnHand() {
+  if (mpHandRef) { mpHandRef.off(); mpHandRef = null; }
+  mpViewerHand = null;
+  if (!mpRoomCode || mpViewerPlayerId == null || !firebaseReady() || !initFirebase()) return;
+  mpHandRef = fbDb.ref('rooms/' + mpRoomCode + '_hands/' + mpViewerPlayerId);
+  mpHandRef.on('value', snap => { mpViewerHand = snap.val() || []; renderViewer(); });
+}
 let mpViewerSessionId = sessionStorage.getItem('rage_vsid') || (() => {
   const id = Math.random().toString(36).slice(2, 10);
   sessionStorage.setItem('rage_vsid', id);
@@ -504,6 +532,18 @@ function startHost() {
       }
     }
   });
+  // Digitaler Kartenmodus: Kartenzüge der Viewer empfangen und validiert anwenden
+  mpRoomRef.child('cardInput').on('value', snap => {
+    const inputs = snap.val();
+    if (!inputs || state.gameMode !== 'digital' || !state.deck) return;
+    if (state.phase !== 'playing' || state.subPhase !== 'play') return;
+    const turnIdx = state.deck.turnIdx;
+    if (turnIdx == null) return;
+    const req = inputs[turnIdx];
+    if (!req) return;
+    mpRoomRef.child('cardInput/' + turnIdx).remove();
+    playDigitalCard(turnIdx, req.cardIdx, req.jokerColor || undefined);
+  });
   window.addEventListener('beforeunload', stopHost);
   save(); render();
 }
@@ -511,6 +551,7 @@ function startHost() {
 function stopHost() {
   if (mpRoomRef) mpRoomRef.remove().catch(() => {});
   try { fbDb.ref('rooms/' + mpRoomCode + '_sel').remove(); } catch (e) {}
+  try { fbDb.ref('rooms/' + mpRoomCode + '_hands').remove(); } catch (e) {}
   if (mpHostSelRef) { mpHostSelRef.off(); mpHostSelRef = null; }
   mpHostSelections = {};
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
@@ -537,8 +578,7 @@ function pushToFirebase() {
     ts: Date.now()
   };
   // Digitaler Kartenmodus: nur die nicht-geheimen Teile mitsenden (niemals die
-  // Handkarten aller Spieler zusammen!). Die private Zustellung der eigenen
-  // Hand pro Spieler folgt in einem späteren Ausbauschritt (UI).
+  // Handkarten aller Spieler zusammen!).
   if (state.gameMode === 'digital' && state.deck) {
     payload.deck = {
       trumpColor: state.deck.trumpColor,
@@ -550,6 +590,11 @@ function pushToFirebase() {
       drawPileCount: (state.deck.drawPile || []).length,
       handCounts: (state.deck.hands || []).map(h => h.length),
     };
+    // Jede Hand landet unter einem eigenen Pfad ('rooms/<code>_hands/<idx>'),
+    // den nur der jeweilige Spieler abonniert – niemand sonst bekommt sie zugestellt.
+    const handsObj = {};
+    state.deck.hands.forEach((h, i) => { handsObj[i] = h; });
+    fbDb.ref('rooms/' + mpRoomCode + '_hands').set(handsObj).catch(() => {});
   }
   mpRoomRef.set(payload).catch(e => console.warn('Firebase sync:', e));
 }
@@ -567,6 +612,7 @@ function joinRoom(code) {
     // Separate Selections-Ref (wird nicht vom Host überschrieben)
     mpSelRef = fbDb.ref('rooms/' + mpRoomCode + '_sel');
     mpSelRef.on('value', snap => { mpViewerSelections = snap.val() || {}; renderViewer(); });
+    if (mpViewerPlayerId != null) subscribeToOwnHand();
     ref.on('value', s => {
       const prevPhase = mpViewerState ? mpViewerState.phase : null;
       mpViewerState = s.val();
@@ -591,6 +637,8 @@ function leaveRoom() {
     mpSelRef.off();
     mpSelRef = null;
   }
+  if (mpHandRef) { mpHandRef.off(); mpHandRef = null; }
+  mpViewerHand = null;
   sessionStorage.removeItem('mpViewer');
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   mpViewerPlayerId = null; mpViewerState = null; mpConnected = false;
@@ -916,6 +964,7 @@ function renderViewer() {
             mpViewerPlayerId = i;
             if (mpSelRef) mpSelRef.child(String(i)).set(mpViewerSessionId);
             try { sessionStorage.setItem('mpViewer', JSON.stringify({ room: mpRoomCode, playerId: i })); } catch (e) {}
+            subscribeToOwnHand();
             renderViewer();
           }
         }, (p.name || `Spieler ${i + 1}`) + (isHost ? ' (Host)' : (isTaken ? ' ✓' : '')));
@@ -1068,6 +1117,13 @@ function renderViewer() {
     // predict / play: nur Tipp (kein Gesamt)
     addCell('DEIN TIPP', prediction !== null ? String(prediction) : '…', prediction !== null ? 'highlight' : '');
     card.appendChild(infoGrid);
+
+    // Digitaler Kartenmodus: eigene Handkarten anzeigen (schon in der Tipp-
+    // Phase, damit man informiert tippen kann) und – während des Stichspiels –
+    // den aktuellen Stich sowie klickbare Karten, wenn man selbst am Zug ist.
+    if (s.gameMode === 'digital' && (s.subPhase === 'predict' || s.subPhase === 'play')) {
+      card.appendChild(renderDigitalHandPanel(s, pi));
+    }
 
     // Dealer + Starter
     if (s.subPhase === 'predict' || s.subPhase === 'play') {
@@ -1433,6 +1489,142 @@ function playDigitalCard(playerIdx, cardIdx, jokerColor) {
   if (mpMode === 'host') pushToFirebase();
   render();
   return true;
+}
+
+// ─── DIGITALER KARTEN-MODUS: Kartenoptik & Bedienung ───────────────────────
+function cardLabel(card) {
+  switch (card.type) {
+    case 'color': return String(card.value);
+    case 'joker': return '🃏';
+    case 'noTrump': return '⊘';
+    case 'trumpChange': return '⇄';
+    case 'plus5': return '+5';
+    case 'minus5': return '−5';
+    default: return '?';
+  }
+}
+function cardBg(card) {
+  if (card.type === 'color') return CARD_COLOR_HEX[card.color];
+  if (card.type === 'plus5') return 'linear-gradient(135deg,#16a34a,#166534)';
+  if (card.type === 'minus5') return 'linear-gradient(135deg,#dc2626,#7f1d1d)';
+  return 'linear-gradient(135deg,#525252,#262626)'; // Joker / Kein Trumpf / Trumpfwechsel
+}
+function cardSubLabel(card) {
+  if (card.type === 'joker') return 'JOKER';
+  if (card.type === 'noTrump') return 'KEIN TRUMPF';
+  if (card.type === 'trumpChange') return 'TRUMPFWECHSEL';
+  return '';
+}
+// Baut die visuelle Darstellung einer einzelnen Spielkarte.
+function renderCardEl(card, opts) {
+  opts = opts || {};
+  const box = el('button', {
+    class: 'play-card' + (opts.disabled ? ' disabled' : '') + (opts.small ? ' small' : ''),
+    style: `background:${cardBg(card)};`,
+    disabled: !!opts.disabled,
+    onclick: opts.onclick || null,
+  });
+  box.appendChild(el('div', { class: 'play-card-value' }, cardLabel(card)));
+  const sub = cardSubLabel(card);
+  if (sub) box.appendChild(el('div', { class: 'play-card-sub' }, sub));
+  return box;
+}
+// Kleiner Modal-Dialog: Farbe für einen ausgespielten Joker ansagen.
+function openJokerColorDialog(onChoose) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const box = document.createElement('div');
+  box.className = 'modal-box';
+  box.appendChild(el('h2', { style: 'margin-top:0;' }, '🃏 Joker – welche Farbe?'));
+  const grid = el('div', { style: 'display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;' });
+  CARD_COLORS.forEach(color => {
+    grid.appendChild(el('button', {
+      class: 'select-chip', style: `background:${CARD_COLOR_HEX[color]};color:#fff;border:none;font-weight:700;padding:14px 6px;`,
+      onclick: () => { overlay.remove(); onChoose(color); }
+    }, color));
+  });
+  box.appendChild(grid);
+  box.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:16px;', onclick: () => overlay.remove() }, 'Abbrechen'));
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+// Der Host spielt eine Karte für seinen eigenen Spieler (falls er per
+// "Wer bist du?" selbst mitspielt) direkt gegen den lokalen State.
+function hostPlayCard(cardIdx) {
+  const hand = state.deck.hands[state.hostPlayerIdx];
+  const card = hand[cardIdx];
+  if (card.type === 'joker') openJokerColorDialog(color => playDigitalCard(state.hostPlayerIdx, cardIdx, color));
+  else playDigitalCard(state.hostPlayerIdx, cardIdx);
+}
+// Ein Viewer schickt seinen Kartenzug als Anfrage an den Host, der ihn
+// validiert und über playDigitalCard() anwendet (siehe cardInput-Listener
+// in startHost()).
+function viewerRequestPlayCard(cardIdx, jokerColor) {
+  if (!mpRoomRef || mpViewerPlayerId == null) return;
+  mpRoomRef.child('cardInput/' + mpViewerPlayerId).set({ cardIdx, jokerColor: jokerColor || null, ts: Date.now() });
+}
+function viewerPlayCard(cardIdx, hand) {
+  const card = hand[cardIdx];
+  if (card.type === 'joker') openJokerColorDialog(color => viewerRequestPlayCard(cardIdx, color));
+  else viewerRequestPlayCard(cardIdx);
+}
+// Baut das Handkarten-Panel für den Viewer: eigene Karten (aus mpViewerHand,
+// privat über Firebase zugestellt), plus – während des Stichspiels – den
+// aktuellen Stich und eine Zug-Anzeige.
+function renderDigitalHandPanel(s, pi) {
+  const wrap = el('div', { class: 'digital-panel' });
+  if (s.deck && s.deck.trumpColor) {
+    const trumpRow = el('div', { class: 'trump-row' });
+    trumpRow.appendChild(el('span', {}, 'Trumpf:'));
+    trumpRow.appendChild(el('span', { class: 'trump-chip', style: `background:${CARD_COLOR_HEX[s.deck.trumpColor]};` }, s.deck.trumpColor));
+    if (s.deck.noTrumpThisTrick) trumpRow.appendChild(el('span', { class: 'badge dim' }, 'Kein Trumpf (dieser Stich)'));
+    wrap.appendChild(trumpRow);
+  }
+  if (s.subPhase === 'play' && s.deck) {
+    const isMyTurn = s.deck.turnIdx === pi;
+    const trickWrap = el('div', { class: 'trick-area' });
+    trickWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin-bottom:6px;' }, 'AKTUELLER STICH'));
+    if (!s.deck.currentTrick || !s.deck.currentTrick.length) {
+      trickWrap.appendChild(el('p', { class: 'hint' }, 'Noch keine Karte gespielt.'));
+    } else {
+      const row = el('div', { class: 'trick-cards' });
+      s.deck.currentTrick.forEach(entry => {
+        const cardEl = renderCardEl(entry, { small: true, disabled: true });
+        const nm = (s.players[entry.by] && s.players[entry.by].name) || `Spieler ${entry.by + 1}`;
+        const col = el('div', { class: 'trick-card-col' });
+        col.appendChild(cardEl);
+        col.appendChild(el('div', { class: 'trick-card-name' }, nm));
+        row.appendChild(col);
+      });
+      trickWrap.appendChild(row);
+    }
+    if (isMyTurn) {
+      trickWrap.appendChild(el('div', { class: 'viewer-my-turn-badge' }, '👉 Du bist am Zug!'));
+    } else if (s.deck.turnIdx != null) {
+      const curName = (s.players[s.deck.turnIdx] && s.players[s.deck.turnIdx].name) || `Spieler ${s.deck.turnIdx + 1}`;
+      trickWrap.appendChild(el('div', { class: 'viewer-info-line' }, `Am Zug: ${curName}`));
+    }
+    wrap.appendChild(trickWrap);
+  }
+  const handWrap = el('div', { class: 'hand-wrap' });
+  handWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin:10px 0 6px;' }, 'MEINE KARTEN'));
+  const hand = mpViewerHand || [];
+  if (!hand.length) {
+    handWrap.appendChild(el('p', { class: 'hint' }, 'Warte auf die Zustellung deiner Karten…'));
+  } else {
+    const row = el('div', { class: 'hand-row' });
+    const canPlay = s.subPhase === 'play' && s.deck && s.deck.turnIdx === pi;
+    hand.forEach((c, idx) => {
+      const legal = canPlay && isLegalCardPlay(hand, idx, s.deck.leadColor);
+      row.appendChild(renderCardEl(c, {
+        disabled: !canPlay || !legal,
+        onclick: (canPlay && legal) ? () => viewerPlayCard(idx, hand) : null,
+      }));
+    });
+    handWrap.appendChild(row);
+  }
+  wrap.appendChild(handWrap);
+  return wrap;
 }
 
 function defaultState() {
@@ -2259,6 +2451,16 @@ function renderPredict() {
   }
   root.appendChild(cols);
 
+  if (state.gameMode === 'digital' && state.hostPlayerIdx != null && state.deck) {
+    const hand = state.deck.hands[state.hostPlayerIdx] || [];
+    const handSec = el('div', { class: 'section' });
+    handSec.appendChild(el('h2', {}, `DEINE KARTEN (${pName(state.hostPlayerIdx)})`));
+    const row = el('div', { class: 'hand-row' });
+    hand.forEach(c => row.appendChild(renderCardEl(c, { disabled: true })));
+    handSec.appendChild(row);
+    root.appendChild(handSec);
+  }
+
   const foot = el('div', { class: 'foot-actions' });
   if (state.history.length > 0) foot.appendChild(el('a', { onclick: editLastRound }, 'Letzte Runde bearbeiten'));
   foot.appendChild(el('a', { onclick: () => { if (confirm('Spiel komplett zurücksetzen?')) reset(); } }, 'Spiel zurücksetzen'));
@@ -2305,6 +2507,7 @@ function makeStepper(value, min, max, onChange, focusId, autofocus) {
 }
 
 function renderPlay() {
+  if (state.gameMode === 'digital') return renderDigitalPlay();
   const root = document.createDocumentFragment();
   root.appendChild(renderRoundBanner());
   const startIdx = getTurnOrder(state.round)[0];
@@ -2335,12 +2538,80 @@ function renderPlay() {
   return root;
 }
 
+// Host-Ansicht während des digitalen Stichspiels: aktueller Stich, wer am
+// Zug ist, und – falls der Host selbst über "Wer bist du?" mitspielt – seine
+// eigenen klickbaren Handkarten. Der Übergang zu "STICHE EINTRAGEN" entfällt
+// hier, weil die Stich-Engine tricksWon/plus5/minus5 automatisch befüllt und
+// selbst zur Ergebnis-Ansicht weiterschaltet, sobald alle Hände leer sind.
+function renderDigitalPlay() {
+  const root = document.createDocumentFragment();
+  root.appendChild(renderRoundBanner());
+  const deck = state.deck || {};
+  const sec = el('div', { class: 'section' });
+  sec.appendChild(el('h2', {}, 'STICH WIRD GESPIELT'));
+  if (deck.trumpColor) {
+    const trumpRow = el('div', { class: 'trump-row' });
+    trumpRow.appendChild(el('span', {}, 'Trumpf:'));
+    trumpRow.appendChild(el('span', { class: 'trump-chip', style: `background:${CARD_COLOR_HEX[deck.trumpColor]};` }, deck.trumpColor));
+    if (deck.noTrumpThisTrick) trumpRow.appendChild(el('span', { class: 'badge dim' }, 'Kein Trumpf (dieser Stich)'));
+    trumpRow.appendChild(el('span', { class: 'hint', style: 'margin-left:auto;' }, `Nachziehstapel: ${(deck.drawPile || []).length}`));
+    sec.appendChild(trumpRow);
+  }
+  const trickWrap = el('div', { class: 'trick-area' });
+  trickWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin-bottom:6px;' }, 'AKTUELLER STICH'));
+  if (!deck.currentTrick || !deck.currentTrick.length) {
+    trickWrap.appendChild(el('p', { class: 'hint' }, 'Noch keine Karte gespielt.'));
+  } else {
+    const row = el('div', { class: 'trick-cards' });
+    deck.currentTrick.forEach(entry => {
+      const col = el('div', { class: 'trick-card-col' });
+      col.appendChild(renderCardEl(entry, { small: true, disabled: true }));
+      col.appendChild(el('div', { class: 'trick-card-name' }, pName(entry.by)));
+      row.appendChild(col);
+    });
+    trickWrap.appendChild(row);
+  }
+  sec.appendChild(trickWrap);
+
+  const handSizes = el('div', { class: 'play-list' });
+  for (let i = 0; i < nPlayers(); i++) {
+    const row = el('div', { class: 'play-row' + (deck.turnIdx === i ? ' starter' : '') });
+    const nm = el('div', { class: 'play-name' });
+    nm.appendChild(el('span', {}, pName(i)));
+    if (deck.turnIdx === i) nm.appendChild(el('span', { class: 'badge' }, 'AM ZUG'));
+    row.appendChild(nm);
+    row.appendChild(el('div', { class: 'play-tip' }, String((deck.hands && deck.hands[i]) ? deck.hands[i].length : 0)));
+    handSizes.appendChild(row);
+  }
+  sec.appendChild(handSizes);
+
+  if (state.hostPlayerIdx != null && deck.turnIdx === state.hostPlayerIdx) {
+    const hand = deck.hands[state.hostPlayerIdx] || [];
+    const handWrap = el('div', { class: 'hand-wrap' });
+    handWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin:10px 0 6px;' }, 'DEINE KARTEN'));
+    const row = el('div', { class: 'hand-row' });
+    hand.forEach((c, idx) => {
+      const legal = isLegalCardPlay(hand, idx, deck.leadColor);
+      row.appendChild(renderCardEl(c, { disabled: !legal, onclick: legal ? () => hostPlayCard(idx) : null }));
+    });
+    handWrap.appendChild(row);
+    sec.appendChild(handWrap);
+  } else if (deck.turnIdx != null) {
+    sec.appendChild(el('p', { class: 'hint' }, `Warte auf ${pName(deck.turnIdx)} …`));
+  }
+
+  root.appendChild(sec);
+  return root;
+}
+
 function renderResults() {
   const root = document.createDocumentFragment();
   root.appendChild(renderRoundBanner());
   const sec = el('div', { class: 'section' });
   sec.appendChild(el('h2', {}, 'STICHE & AKTIONSKARTEN'));
-  sec.appendChild(el('p', { class: 'hint', html: 'Pro Spieler eintragen: gewonnene Stiche, erhaltene +5 und −5 Karten. Tippen + <kbd>Enter</kbd> springt zum nächsten Feld.' }));
+  sec.appendChild(el('p', { class: 'hint', html: state.gameMode === 'digital'
+    ? 'Wurden automatisch aus dem digitalen Kartenspiel ermittelt. Bei Bedarf hier noch korrigieren.'
+    : 'Pro Spieler eintragen: gewonnene Stiche, erhaltene +5 und −5 Karten. Tippen + <kbd>Enter</kbd> springt zum nächsten Feld.' }));
 
   const grid = el('div', { class: 'results-grid' });
   for (let i = 0; i < nPlayers(); i++) {
