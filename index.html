@@ -509,12 +509,18 @@ function generateRoomCode() {
   return c;
 }
 
-function startHost() {
-  if (!initFirebase()) return;
+// Verbindet diesen Client als Host mit dem angegebenen Raumcode: setzt
+// mpMode/mpRoomRef, registriert alle Firebase-Listener (Mitspieler-Auswahl,
+// Tipp-Eingaben, Kartenzüge, Stich-Bestätigungen) und merkt sich den
+// Raumcode dauerhaft, damit ein Reload/PWA-Neustart automatisch wieder an
+// denselben Raum andockt statt einen neuen (für Viewer unerreichbaren) Raum
+// zu erzeugen – sonst hängt das ganze Spiel fest, sobald der Host neu lädt.
+function attachHostToRoom(code) {
   mpMode = 'host';
-  mpRoomCode = generateRoomCode();
+  mpRoomCode = code;
   mpRoomRef = fbDb.ref('rooms/' + mpRoomCode);
   pushToFirebase();
+  try { localStorage.setItem('mpHost', JSON.stringify({ room: mpRoomCode })); } catch (e) {}
   // Auswahl der Mitspieler beobachten, damit der Host sieht, wer schon einen Spieler gewählt hat
   mpHostSelRef = fbDb.ref('rooms/' + mpRoomCode + '_sel');
   mpHostSelRef.on('value', snap => { mpHostSelections = snap.val() || {}; render(); });
@@ -558,6 +564,10 @@ function startHost() {
     confirmTrickContinue();
   });
   window.addEventListener('beforeunload', stopHost);
+}
+function startHost() {
+  if (!initFirebase()) return;
+  attachHostToRoom(generateRoomCode());
   save(); render();
 }
 
@@ -567,6 +577,7 @@ function stopHost() {
   try { fbDb.ref('rooms/' + mpRoomCode + '_hands').remove(); } catch (e) {}
   if (mpHostSelRef) { mpHostSelRef.off(); mpHostSelRef = null; }
   mpHostSelections = {};
+  localStorage.removeItem('mpHost');
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   save(); render();
 }
@@ -3237,24 +3248,40 @@ document.addEventListener('visibilitychange', () => {
 });
 requestWakeLock();
 
-// Viewer-Session nach Reload wiederherstellen
+// Host-Session nach Reload/PWA-Neustart wiederherstellen: sonst hängt das
+// Spiel für alle Mitspieler fest, weil der Host sonst keinen Kontakt mehr
+// zum bisherigen Raum hätte (siehe attachHostToRoom()).
+let hostResumed = false;
 try {
-  const saved = sessionStorage.getItem('mpViewer');
-  if (saved) {
-    const { room, playerId } = JSON.parse(saved);
-    if (room && firebaseReady()) {
-      if (playerId != null) mpViewerPlayerId = playerId;
-      joinRoom(room);
+  const savedHost = localStorage.getItem('mpHost');
+  if (savedHost && firebaseReady() && initFirebase()) {
+    const { room } = JSON.parse(savedHost);
+    if (room) { attachHostToRoom(room); hostResumed = true; }
+  }
+} catch (e) { localStorage.removeItem('mpHost'); }
+
+if (hostResumed) {
+  render();
+} else {
+  // Viewer-Session nach Reload wiederherstellen
+  try {
+    const saved = sessionStorage.getItem('mpViewer');
+    if (saved) {
+      const { room, playerId } = JSON.parse(saved);
+      if (room && firebaseReady()) {
+        if (playerId != null) mpViewerPlayerId = playerId;
+        joinRoom(room);
+      } else {
+        sessionStorage.removeItem('mpViewer');
+        render();
+      }
     } else {
-      sessionStorage.removeItem('mpViewer');
       render();
     }
-  } else {
+  } catch (e) {
+    sessionStorage.removeItem('mpViewer');
     render();
   }
-} catch (e) {
-  sessionStorage.removeItem('mpViewer');
-  render();
 }
 </script>
 <script>
