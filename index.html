@@ -1417,6 +1417,16 @@ function pickHighestEntry(entries) {
   });
   return best;
 }
+// Setzt eine neu aufgedeckte Trumpf-Anzeigekarte und legt die bisherige
+// Anzeigekarte (falls vorhanden) unten in den Nachziehstapel zurück. So
+// bleiben über die ganze Runde alle 112 Karten eindeutig im Umlauf – keine
+// Karte geht durch einen Trumpfwechsel verloren.
+function setNewTrump(newCard) {
+  if (!newCard) return; // Nachziehstapel leer -> Trumpf bleibt wie er war
+  if (state.deck.trumpIndicatorCard) state.deck.drawPile.push(state.deck.trumpIndicatorCard);
+  state.deck.trumpColor = newCard.color;
+  state.deck.trumpIndicatorCard = newCard;
+}
 // Wertet den abgeschlossenen Stich aus, schreibt Stich-/Bonuspunkte fort und
 // bereitet den nächsten Stich vor (Gewinner eröffnet). Prüft danach, ob die
 // Runde damit zu Ende gespielt ist.
@@ -1444,8 +1454,7 @@ function resolveDigitalTrick() {
   state.deck.trickLeader = winnerIdx;
   state.deck.turnIdx = winnerIdx;
   if (state.deck.noTrumpThisTrick) {
-    const newTrump = drawUntilColorCard(state.deck.drawPile);
-    if (newTrump) { state.deck.trumpColor = newTrump.color; state.deck.trumpIndicatorCard = newTrump; }
+    setNewTrump(drawUntilColorCard(state.deck.drawPile));
     state.deck.noTrumpThisTrick = false;
   }
   if (state.deck.hands.every(h => h.length === 0)) state.subPhase = 'results';
@@ -1471,8 +1480,7 @@ function playDigitalCard(playerIdx, cardIdx, jokerColor) {
     if (effColor) state.deck.leadColor = effColor;
   }
   if (card.type === 'trumpChange') {
-    const newTrump = drawUntilColorCard(state.deck.drawPile);
-    if (newTrump) { state.deck.trumpColor = newTrump.color; state.deck.trumpIndicatorCard = newTrump; }
+    setNewTrump(drawUntilColorCard(state.deck.drawPile));
     state.deck.noTrumpThisTrick = false;
   } else if (card.type === 'noTrump') {
     state.deck.noTrumpThisTrick = true;
@@ -1514,6 +1522,23 @@ function cardSubLabel(card) {
   if (card.type === 'noTrump') return 'KEIN TRUMPF';
   if (card.type === 'trumpChange') return 'TRUMPFWECHSEL';
   return '';
+}
+// Liefert die Original-Indizes einer Hand in Anzeige-Reihenfolge: erst
+// Farbkarten (Farbe nach CARD_COLORS-Reihenfolge, dann Wert aufsteigend),
+// danach die Sonderkarten. So findet man seine Karten auf einen Blick
+// wieder; playDigitalCard() erhält weiterhin den echten Original-Index.
+function sortedHandOrder(hand) {
+  const typeRank = { color: 0, joker: 1, noTrump: 2, trumpChange: 3, plus5: 4, minus5: 5 };
+  return hand.map((c, i) => i).sort((ia, ib) => {
+    const a = hand[ia], b = hand[ib];
+    if (typeRank[a.type] !== typeRank[b.type]) return typeRank[a.type] - typeRank[b.type];
+    if (a.type === 'color') {
+      const ca = CARD_COLORS.indexOf(a.color), cb = CARD_COLORS.indexOf(b.color);
+      if (ca !== cb) return ca - cb;
+      return a.value - b.value;
+    }
+    return 0;
+  });
 }
 // Baut die visuelle Darstellung einer einzelnen Spielkarte.
 function renderCardEl(card, opts) {
@@ -1614,7 +1639,8 @@ function renderDigitalHandPanel(s, pi) {
   } else {
     const row = el('div', { class: 'hand-row' });
     const canPlay = s.subPhase === 'play' && s.deck && s.deck.turnIdx === pi;
-    hand.forEach((c, idx) => {
+    sortedHandOrder(hand).forEach(idx => {
+      const c = hand[idx];
       const legal = canPlay && isLegalCardPlay(hand, idx, s.deck.leadColor);
       row.appendChild(renderCardEl(c, {
         disabled: !canPlay || !legal,
@@ -1849,15 +1875,20 @@ function openGameModeDialog() {
     onclick: () => { overlay.remove(); startGame('physical'); }
   }, '🃏 Mit echten Karten');
   box.appendChild(physBtn);
-  const digitalEnabled = mpMode === 'host';
+  const claimedCount = Object.keys(mpHostSelections || {}).filter(k => mpHostSelections[k]).length
+    + (state.hostPlayerIdx != null && !mpHostSelections[String(state.hostPlayerIdx)] ? 1 : 0);
+  const allClaimed = claimedCount >= nPlayers();
+  const digitalEnabled = mpMode === 'host' && allClaimed;
   const digiBtn = el('button', {
     class: 'btn-primary', style: 'margin-top:10px;' + (digitalEnabled ? '' : 'opacity:0.45;cursor:not-allowed;'),
     disabled: !digitalEnabled,
     onclick: () => { if (!digitalEnabled) return; overlay.remove(); startGame('digital'); }
   }, '📱 Digital in der App');
   box.appendChild(digiBtn);
-  if (!digitalEnabled) {
+  if (mpMode !== 'host') {
     box.appendChild(el('p', { class: 'hint', style: 'margin-top:8px;' }, 'Erfordert einen laufenden Mehrspieler-Raum, damit jeder seine eigenen Handkarten auf dem eigenen Gerät geheim halten kann.'));
+  } else if (!allClaimed) {
+    box.appendChild(el('p', { class: 'hint', style: 'margin-top:8px;' }, `Noch nicht alle Plätze zugeordnet (${claimedCount}/${nPlayers()}). Jeder Spieler muss erst im Raum seinen Namen auswählen, sonst hat er keine eigenen Handkarten.`));
   }
   box.appendChild(el('button', { class: 'btn-secondary', style: 'margin-top:14px;', onclick: () => overlay.remove() }, 'Abbrechen'));
   overlay.appendChild(box);
@@ -2451,13 +2482,21 @@ function renderPredict() {
   }
   root.appendChild(cols);
 
-  if (state.gameMode === 'digital' && state.hostPlayerIdx != null && state.deck) {
-    const hand = state.deck.hands[state.hostPlayerIdx] || [];
+  if (state.gameMode === 'digital' && state.deck) {
     const handSec = el('div', { class: 'section' });
-    handSec.appendChild(el('h2', {}, `DEINE KARTEN (${pName(state.hostPlayerIdx)})`));
-    const row = el('div', { class: 'hand-row' });
-    hand.forEach(c => row.appendChild(renderCardEl(c, { disabled: true })));
-    handSec.appendChild(row);
+    if (state.deck.trumpColor) {
+      const trumpRow = el('div', { class: 'trump-row' });
+      trumpRow.appendChild(el('span', {}, 'Trumpf:'));
+      trumpRow.appendChild(el('span', { class: 'trump-chip', style: `background:${CARD_COLOR_HEX[state.deck.trumpColor]};` }, state.deck.trumpColor));
+      handSec.appendChild(trumpRow);
+    }
+    if (state.hostPlayerIdx != null) {
+      const hand = state.deck.hands[state.hostPlayerIdx] || [];
+      handSec.appendChild(el('h2', { style: 'margin-top:10px;' }, `DEINE KARTEN (${pName(state.hostPlayerIdx)})`));
+      const row = el('div', { class: 'hand-row' });
+      sortedHandOrder(hand).forEach(idx => row.appendChild(renderCardEl(hand[idx], { disabled: true })));
+      handSec.appendChild(row);
+    }
     root.appendChild(handSec);
   }
 
@@ -2585,17 +2624,20 @@ function renderDigitalPlay() {
   }
   sec.appendChild(handSizes);
 
-  if (state.hostPlayerIdx != null && deck.turnIdx === state.hostPlayerIdx) {
+  if (state.hostPlayerIdx != null) {
+    const canPlay = deck.turnIdx === state.hostPlayerIdx;
     const hand = deck.hands[state.hostPlayerIdx] || [];
     const handWrap = el('div', { class: 'hand-wrap' });
     handWrap.appendChild(el('div', { class: 'viewer-lb-title', style: 'margin:10px 0 6px;' }, 'DEINE KARTEN'));
     const row = el('div', { class: 'hand-row' });
-    hand.forEach((c, idx) => {
-      const legal = isLegalCardPlay(hand, idx, deck.leadColor);
+    sortedHandOrder(hand).forEach(idx => {
+      const c = hand[idx];
+      const legal = canPlay && isLegalCardPlay(hand, idx, deck.leadColor);
       row.appendChild(renderCardEl(c, { disabled: !legal, onclick: legal ? () => hostPlayCard(idx) : null }));
     });
     handWrap.appendChild(row);
     sec.appendChild(handWrap);
+    if (!canPlay && deck.turnIdx != null) sec.appendChild(el('p', { class: 'hint' }, `Warte auf ${pName(deck.turnIdx)} …`));
   } else if (deck.turnIdx != null) {
     sec.appendChild(el('p', { class: 'hint' }, `Warte auf ${pName(deck.turnIdx)} …`));
   }
