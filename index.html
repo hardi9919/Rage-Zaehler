@@ -503,10 +503,7 @@ function initFirebase() {
 }
 
 function generateRoomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let c = '';
-  for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)];
-  return c;
+  return String(Math.floor(1000 + Math.random() * 9000));
 }
 
 // Verbindet diesen Client als Host mit dem angegebenen Raumcode: setzt
@@ -2479,9 +2476,9 @@ function renderSetup() {
     const row = el('div', { class: 'mp-row' });
     row.appendChild(el('button', { class: 'btn-mp-host', onclick: startHost }, '📡 Host werden'));
     const joinWrap = el('div', { class: 'mp-join' });
-    const joinInput = el('input', { type: 'text', placeholder: 'Code eingeben…', maxlength: '6', class: 'mp-code-input', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false' });
-    joinInput.style.textTransform = 'uppercase';
-    const joinBtn = el('button', { class: 'btn-mp-join', onclick: () => { if (joinInput.value.trim().length >= 4) joinRoom(joinInput.value); } }, '→');
+    const joinInput = el('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]*', placeholder: 'Code eingeben…', maxlength: '4', class: 'mp-code-input', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false' });
+    joinInput.addEventListener('input', () => { joinInput.value = joinInput.value.replace(/[^0-9]/g, ''); });
+    const joinBtn = el('button', { class: 'btn-mp-join', onclick: () => { if (joinInput.value.trim().length === 4) joinRoom(joinInput.value); } }, '→');
     joinInput.addEventListener('keydown', e => { if (e.key === 'Enter') joinBtn.click(); });
     joinWrap.appendChild(joinInput);
     joinWrap.appendChild(joinBtn);
