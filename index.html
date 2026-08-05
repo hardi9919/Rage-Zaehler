@@ -470,6 +470,7 @@ let mpSelRef = null;
 let mpHostSelections = {};
 let mpHostSelRef = null;
 let mpHandRef = null;
+let mpOrphanCheckTimer = null;
 let mpViewerHand = null; // eigene Handkarten im digitalen Kartenmodus (nur die eigenen!)
 // Abonniert (bzw. wechselt) die private Zustellung der eigenen Handkarten.
 // Läuft über einen eigenen Firebase-Pfad ('rooms/<code>_hands/<idx>'), damit
@@ -506,6 +507,13 @@ function generateRoomCode() {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
 
+// Wie lange ein Raum ohne Host-Verbindung als "verwaist" toleriert wird,
+// bevor er als beendet gilt und aufgeräumt wird. Kurze Wackler (Tunnel,
+// Aufzug, App kurz im Hintergrund) sollen dadurch nicht sofort den Raum
+// killen – wird die Verbindung aber nicht innerhalb dieser Zeit wieder
+// aufgenommen, gilt der Raum als vergessen.
+const ROOM_ORPHAN_TIMEOUT_MS = 10 * 60 * 1000;
+
 // Verbindet diesen Client als Host mit dem angegebenen Raumcode: setzt
 // mpMode/mpRoomRef, registriert alle Firebase-Listener (Mitspieler-Auswahl,
 // Tipp-Eingaben, Kartenzüge, Stich-Bestätigungen) und merkt sich den
@@ -516,6 +524,12 @@ function attachHostToRoom(code) {
   mpMode = 'host';
   mpRoomCode = code;
   mpRoomRef = fbDb.ref('rooms/' + mpRoomCode);
+  // Reisst die Verbindung dieses Geräts ab (App zu, Netz weg, Akku leer …),
+  // markiert Firebase serverseitig automatisch den Abbruchzeitpunkt – der
+  // Raum wird NICHT sofort gelöscht, sondern erst als verwaist behandelt,
+  // wenn er länger als ROOM_ORPHAN_TIMEOUT_MS unbeaufsichtigt bleibt (siehe
+  // joinRoom() und die Viewer-Verbindungsüberwachung weiter unten).
+  mpRoomRef.onDisconnect().update({ disconnectedAt: firebase.database.ServerValue.TIMESTAMP });
   pushToFirebase();
   try { localStorage.setItem('mpHost', JSON.stringify({ room: mpRoomCode })); } catch (e) {}
   // Auswahl der Mitspieler beobachten, damit der Host sieht, wer schon einen Spieler gewählt hat
@@ -599,7 +613,7 @@ function startHost() {
 }
 
 function stopHost() {
-  if (mpRoomRef) mpRoomRef.remove().catch(() => {});
+  if (mpRoomRef) { mpRoomRef.onDisconnect().cancel(); mpRoomRef.remove().catch(() => {}); }
   try { fbDb.ref('rooms/' + mpRoomCode + '_sel').remove(); } catch (e) {}
   try { fbDb.ref('rooms/' + mpRoomCode + '_hands').remove(); } catch (e) {}
   if (mpHostSelRef) { mpHostSelRef.off(); mpHostSelRef = null; }
@@ -659,6 +673,12 @@ function joinRoom(code) {
   const ref = fbDb.ref('rooms/' + code.toUpperCase().trim());
   ref.once('value', snap => {
     if (!snap.exists()) { alert('Raum „' + code + '" nicht gefunden. Ist der Code korrekt?'); return; }
+    const data = snap.val();
+    if (data.disconnectedAt && (Date.now() - data.disconnectedAt) > ROOM_ORPHAN_TIMEOUT_MS) {
+      ref.remove().catch(() => {});
+      alert('Der Raum wurde beendet, da der Gastgeber die Verbindung verloren hat.');
+      return;
+    }
     mpMode = 'viewer';
     mpRoomCode = code.toUpperCase().trim();
     mpRoomRef = ref;
@@ -673,6 +693,26 @@ function joinRoom(code) {
       mpViewerState = s.val();
       mpConnected = !!mpViewerState;
       if (mpViewerState && mpViewerState.phase === 'playing' && prevPhase !== 'playing') schedulePopup();
+      // Überwacht, ob der Host die Verbindung verloren hat (disconnectedAt gesetzt).
+      // Kommt er nicht innerhalb von ROOM_ORPHAN_TIMEOUT_MS zurück, gilt der Raum
+      // als verwaist – wird dann automatisch aufgeräumt statt endlos zu warten.
+      if (mpOrphanCheckTimer) { clearTimeout(mpOrphanCheckTimer); mpOrphanCheckTimer = null; }
+      if (mpViewerState && mpViewerState.disconnectedAt) {
+        const remaining = ROOM_ORPHAN_TIMEOUT_MS - (Date.now() - mpViewerState.disconnectedAt);
+        if (remaining <= 0) {
+          mpRoomRef.remove().catch(() => {});
+          mpViewerState = null;
+        } else {
+          mpOrphanCheckTimer = setTimeout(() => {
+            mpOrphanCheckTimer = null;
+            if (mpViewerState && mpViewerState.disconnectedAt) {
+              mpRoomRef.remove().catch(() => {});
+              mpViewerState = null;
+              renderViewer();
+            }
+          }, remaining + 500);
+        }
+      }
       renderViewer();
     });
     ref.root.child('.info/connected').on('value', s => { mpConnected = s.val(); renderViewer(); });
@@ -694,6 +734,7 @@ function leaveRoom() {
   }
   if (mpHandRef) { mpHandRef.off(); mpHandRef = null; }
   mpViewerHand = null;
+  if (mpOrphanCheckTimer) { clearTimeout(mpOrphanCheckTimer); mpOrphanCheckTimer = null; }
   sessionStorage.removeItem('mpViewer');
   mpMode = null; mpRoomCode = null; mpRoomRef = null;
   mpViewerPlayerId = null; mpViewerState = null; mpConnected = false;
@@ -1073,6 +1114,11 @@ function renderViewer() {
   }, state.theme === 'light' ? '🌙' : '☀️'));
   hdr.appendChild(el('button', { class: 'viewer-leave', onclick: leaveRoom }, '✕'));
   frag.appendChild(hdr);
+
+  if (s.disconnectedAt) {
+    frag.appendChild(el('div', { class: 'viewer-forbidden', style: 'margin:10px 16px 0;' },
+      '⚠️ Verbindung zum Gastgeber unterbrochen – warte auf Rückkehr …'));
+  }
 
   maybeAnnounceViewerPlay(s);
   maybeAnnounceViewerForbidden(s);
