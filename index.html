@@ -524,44 +524,74 @@ function attachHostToRoom(code) {
   // Auswahl der Mitspieler beobachten, damit der Host sieht, wer schon einen Spieler gewählt hat
   mpHostSelRef = fbDb.ref('rooms/' + mpRoomCode + '_sel');
   mpHostSelRef.on('value', snap => { mpHostSelections = snap.val() || {}; render(); });
-  // Viewer-Tipps empfangen
+  // Viewer-Tipps empfangen. WICHTIG: Jede Eingabe, die nicht sofort zum
+  // aktuellen Zeitpunkt passt (z.B. weil "Mitspieler tippen selbst" gerade
+  // aus war, die Runde inzwischen weiter ist, oder der Wert ungültig ist),
+  // wird aktiv aus Firebase entfernt statt einfach ignoriert. Sonst bleibt
+  // sie als "Geisterwert" liegen und wird später – wenn zufällig wieder
+  // genau dieser Spieler an der Reihe ist – unbemerkt als (veralteter) Tipp
+  // übernommen, ohne dass der Spieler in diesem Moment überhaupt geklickt hat.
   mpRoomRef.child('viewerInput').on('value', snap => {
     const inputs = snap.val();
-    if (!inputs || !state.viewerPredictEnabled) return;
-    if (state.phase !== 'playing' || state.subPhase !== 'predict') return;
+    if (!inputs) return;
+    const applicable = state.viewerPredictEnabled && state.phase === 'playing' && state.subPhase === 'predict';
+    if (!applicable) {
+      Object.keys(inputs).forEach(k => mpRoomRef.child('viewerInput/' + k).remove());
+      return;
+    }
     const order = getTurnOrder(state.round);
     const curIdx = order[state.predictTurn];
+    Object.keys(inputs).forEach(k => {
+      if (Number(k) !== curIdx) mpRoomRef.child('viewerInput/' + k).remove();
+    });
     if (inputs[curIdx] != null) {
       const val = parseInt(inputs[curIdx], 10);
-      if (!isNaN(val)) {
-        mpRoomRef.child('viewerInput/' + curIdx).remove();
-        submitPrediction(Math.max(0, Math.min(cards(state.round), val)));
-      }
+      mpRoomRef.child('viewerInput/' + curIdx).remove();
+      if (!isNaN(val)) submitPrediction(Math.max(0, Math.min(cards(state.round), val)));
     }
   });
-  // Digitaler Kartenmodus: Kartenzüge der Viewer empfangen und validiert anwenden
+  // Digitaler Kartenmodus: Kartenzüge der Viewer empfangen und validiert
+  // anwenden. Ebenfalls: nicht passende/veraltete Anfragen sofort entfernen,
+  // statt sie liegen zu lassen (siehe Kommentar oben bei viewerInput).
   mpRoomRef.child('cardInput').on('value', snap => {
     const inputs = snap.val();
-    if (!inputs || state.gameMode !== 'digital' || !state.deck) return;
-    if (state.phase !== 'playing' || state.subPhase !== 'play') return;
+    if (!inputs) return;
+    const applicable = state.gameMode === 'digital' && !!state.deck &&
+      state.phase === 'playing' && state.subPhase === 'play' && state.deck.turnIdx != null;
+    if (!applicable) {
+      Object.keys(inputs).forEach(k => mpRoomRef.child('cardInput/' + k).remove());
+      return;
+    }
     const turnIdx = state.deck.turnIdx;
-    if (turnIdx == null) return;
+    Object.keys(inputs).forEach(k => {
+      if (Number(k) !== turnIdx) mpRoomRef.child('cardInput/' + k).remove();
+    });
     const req = inputs[turnIdx];
-    if (!req) return;
-    mpRoomRef.child('cardInput/' + turnIdx).remove();
-    playDigitalCard(turnIdx, req.cardIdx, req.jokerColor || undefined);
+    if (req) {
+      mpRoomRef.child('cardInput/' + turnIdx).remove();
+      playDigitalCard(turnIdx, req.cardIdx, req.jokerColor || undefined);
+    }
   });
   // Digitaler Kartenmodus: "Weiter" nach einem fertigen Stich – nur vom
   // tatsächlichen Stichsieger angenommen (am Rundenende macht stattdessen
-  // ausschließlich der Host selbst weiter, siehe UI).
+  // ausschließlich der Host selbst weiter, siehe UI). Auch hier: veraltete
+  // Anfragen sofort entfernen, statt sie liegen zu lassen.
   mpRoomRef.child('continueInput').on('value', snap => {
     const inputs = snap.val();
-    if (!inputs || state.gameMode !== 'digital' || !state.deck) return;
-    if (!state.deck.trickComplete || state.deck.roundOver) return;
+    if (!inputs) return;
+    const applicable = state.gameMode === 'digital' && !!state.deck && state.deck.trickComplete && !state.deck.roundOver;
+    if (!applicable) {
+      Object.keys(inputs).forEach(k => mpRoomRef.child('continueInput/' + k).remove());
+      return;
+    }
     const winnerIdx = state.deck.trickWinner;
-    if (winnerIdx == null || !inputs[winnerIdx]) return;
-    mpRoomRef.child('continueInput/' + winnerIdx).remove();
-    confirmTrickContinue();
+    Object.keys(inputs).forEach(k => {
+      if (Number(k) !== winnerIdx) mpRoomRef.child('continueInput/' + k).remove();
+    });
+    if (winnerIdx != null && inputs[winnerIdx]) {
+      mpRoomRef.child('continueInput/' + winnerIdx).remove();
+      confirmTrickContinue();
+    }
   });
   window.addEventListener('beforeunload', stopHost);
 }
