@@ -9,6 +9,20 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0a0a0a">
+<script>
+// Gespeichertes Design (hell/dunkel) schon vor der ersten Anzeige setzen –
+// sonst ist im hellen Design beim Start kurz alles dunkel und die Farbe der
+// Systemleisten (theme-color) passt nicht. Muss mit applyTheme() übereinstimmen.
+(function () {
+  try {
+    var saved = JSON.parse(localStorage.getItem('rage-tracker-v2') || '{}');
+    if (saved && saved.theme === 'light') {
+      document.documentElement.classList.add('light');
+      document.querySelector('meta[name="theme-color"]').setAttribute('content', '#f7f5f4');
+    }
+  } catch (e) {}
+})();
+</script>
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
@@ -36,6 +50,7 @@
   --accent-dark: #b91c1c;
   --good: #22c55e;
   --bad: #ef4444;
+  --glow: #2a0a0a;
 }
 html.light {
   --bg: #f7f5f4;
@@ -51,42 +66,46 @@ html.light {
   --accent-dark: #b91c1c;
   --good: #16a34a;
   --bad: #dc2626;
+  --glow: #fde8e8;
 }
 html.light .title { text-shadow: 3px 3px 0 rgba(220,38,38,0.18), 5px 5px 0 rgba(220,38,38,0.08); }
 html.light .round-banner { background: linear-gradient(135deg, #ffffff 0%, #f5efee 100%); }
 html.light .winner-banner { background: linear-gradient(135deg, #ffffff 0%, #fbe9e9 100%); border-color: var(--accent); }
 html.light .winner-banner .pts { color: var(--text-dim); }
-html.light, html.light body { background: var(--bg); }
-html.light body::before, html.light body::after { background: var(--bg); }
-html.light body {
-  background: radial-gradient(ellipse 80% 50% at 50% -10%, #fde8e8 0%, transparent 50%), var(--bg);
-}
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-html { overscroll-behavior: none; overflow-x: hidden; background: #0a0a0a; }
-body { overscroll-behavior: none; background-color: #0a0a0a; }
-body::before {
-  content: ''; position: fixed; top: -100px; left: -100px; right: -100px; bottom: -100px;
-  background: #0a0a0a; z-index: -10; pointer-events: none;
-}
-/* Abstand oben für Statusleiste/Kamera-Aussparung. Im Vollbild-Modus meldet
-   Android den Platz der Kamera-Aussparung bei ausgeblendeten Systemleisten
-   nicht (env() = 0) – dann läge der App-Anfang unter der Kamera. Deshalb im
-   Vollbild immer mindestens 40px, bzw. mehr, wenn das Gerät mehr meldet. */
-:root { --safe-top: env(safe-area-inset-top, 0px); }
-@media (display-mode: fullscreen) {
-  :root { --safe-top: max(env(safe-area-inset-top, 0px), 40px); }
-}
+
+/* ─── Vollbild / Ränder ───────────────────────────────────────────────────
+   Die App läuft im Vollbild (manifest: display "fullscreen") und zeichnet
+   mit viewport-fit=cover bis an alle Bildschirmränder, auch hinter Kamera-
+   Aussparung und eingeblendete Systemleisten. Wie viel Platz dort frei
+   bleiben muss, meldet das Gerät über env(safe-area-inset-*) – nur diese
+   Werte werden als Abstand verwendet, keine geratenen Pixelwerte.
+
+   Hintergrund: EINE fest stehende Ebene (body::before) für beide Designs,
+   gesteuert nur über --bg / --glow. Der Abdeckstreifen oben (body::after)
+   verhindert, dass beim Scrollen Inhalt hinter Kamera/Statusleiste sichtbar
+   ist. Er nutzt exakt denselben Hintergrund, bezogen auf denselben Bereich
+   (background-attachment: fixed = ganzer Bildschirm) – dadurch ist er
+   farblich nicht vom restlichen Hintergrund zu unterscheiden. */
+html { background: var(--bg); overscroll-behavior: none; overflow-x: hidden; }
+body::before,
 body::after {
-  content: ''; position: fixed; top: 0; left: 0; right: 0;
-  height: calc(var(--safe-top) + 4px);
-  background: #0a0a0a; z-index: 9999; pointer-events: none;
+  content: ''; position: fixed; left: 0; right: 0; top: 0; pointer-events: none;
+  background-color: var(--bg);
+  background-image: radial-gradient(ellipse 80% 50% at 50% -10%, var(--glow) 0%, transparent 50%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
 }
+body::before { bottom: 0; z-index: -1; }
+body::after { height: env(safe-area-inset-top, 0px); z-index: 9999; }
 body {
   font-family: 'Outfit', system-ui, sans-serif;
-  background: radial-gradient(ellipse 80% 50% at 50% -10%, #2a0a0a 0%, transparent 50%), #0a0a0a;
+  background: transparent;
+  overscroll-behavior: none;
   color: var(--text);
   min-height: 100vh;
-  padding: calc(12px + var(--safe-top)) calc(12px + env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+  min-height: 100dvh;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) calc(28px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
   font-size: 15px;
   -webkit-user-select: none;
   user-select: none;
