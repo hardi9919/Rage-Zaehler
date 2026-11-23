@@ -1854,6 +1854,9 @@ function defaultState() {
 let state;
 let pendingFocus = null;
 let initialFocusPending = true;
+const IS_TOUCH_ONLY = (() => {
+  try { return window.matchMedia('(hover: none) and (pointer: coarse)').matches; } catch (e) { return false; }
+})();
 let lastScreen = null;
 function loadState() {
   try {
@@ -3283,6 +3286,12 @@ function render() {
       return;
     }
   }
+  // Auf Touch-Geräten (Handy/Tablet) kein automatisches Fokussieren: sonst
+  // scrollt Android die Seite bei jeder Höhenänderung (Statusleiste/Navigations-
+  // leiste ein- oder ausblenden) so, dass das fokussierte Feld sichtbar bleibt –
+  // der obere Teil der App rutscht dadurch unter die Statusleiste. Die
+  // Tastatur-Komfortfunktionen sind ohnehin nur am PC mit Tastatur nützlich.
+  if (IS_TOUCH_ONLY) { initialFocusPending = false; return; }
   // Einmaliger Start-Fokus auf erstes Namensfeld
   if (initialFocusPending) {
     initialFocusPending = false;
